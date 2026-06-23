@@ -7,39 +7,49 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/go-chi/chi/v5"
 )
 
 var urls = make(map[string]string)
+var baseURL string // будет установлен из main
 
+// SetBaseURL устанавливает базовый URL из конфига
+func SetBaseURL(url string) {
+	baseURL = url
+}
+
+// generateID генерирует уникальный ID
 func generateID() string {
 	b := make([]byte, 6)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		panic("failed to generate random ID")
+	}
 	return base64.URLEncoding.EncodeToString(b)[:8]
 }
 
-func Router(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodPost:
-		shortener(w, r)
-	case http.MethodGet:
-		expander(w, r)
-	default:
-		w.WriteHeader(http.StatusBadRequest)
-	}
-}
-
+// shortener возвращает сокращённый URL
 func shortener(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("Content-Type") != "text/plain" {
+		http.Error(w, "Content-Type must be text/plain", http.StatusBadRequest)
+		return
+	}
+
 	b, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "Cannot read request body", http.StatusBadRequest)
 		return
 	}
-	originalURL := strings.TrimSpace(string(b))
 
-	// Улучшенная валидация URL
+	originalURL := strings.TrimSpace(string(b))
+	if originalURL == "" {
+		http.Error(w, "URL cannot be empty", http.StatusBadRequest)
+		return
+	}
+
 	parsedURL, err := url.ParseRequestURI(originalURL)
 	if err != nil || parsedURL.Scheme == "" || parsedURL.Host == "" {
-		http.Error(w, "Bad URL given", http.StatusBadRequest)
+		http.Error(w, "Invalid URL format", http.StatusBadRequest)
 		return
 	}
 
@@ -47,7 +57,7 @@ func shortener(w http.ResponseWriter, r *http.Request) {
 		if existingURL == originalURL {
 			w.Header().Set("Content-Type", "text/plain")
 			w.WriteHeader(http.StatusCreated)
-			w.Write([]byte("http://localhost:8080/" + id))
+			w.Write([]byte(baseURL + "/" + id))
 			return
 		}
 	}
@@ -64,23 +74,30 @@ func shortener(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/plain")
 	w.WriteHeader(http.StatusCreated)
-	w.Write([]byte("http://localhost:8080/" + id))
+	w.Write([]byte(baseURL + "/" + id))
 }
 
+// expander возвращает оригинальный URL
 func expander(w http.ResponseWriter, r *http.Request) {
-	if len(r.URL.Path) < 2 {
-		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte("Bad ID given"))
+	path := strings.TrimPrefix(r.URL.Path, "/")
+	if path == "" {
+		http.Error(w, "URL ID is required", http.StatusBadRequest)
 		return
 	}
-	param := r.URL.Path[1:]
 
-	target, ok := urls[param]
+	originalURL, ok := urls[path]
 	if !ok {
-		w.WriteHeader(http.StatusNotFound)
+		http.Error(w, "URL not found", http.StatusNotFound)
 		return
 	}
 
-	w.Header().Set("Location", target)
+	w.Header().Set("Location", originalURL)
 	w.WriteHeader(http.StatusTemporaryRedirect)
+}
+
+func NewRouter() chi.Router {
+	r := chi.NewRouter()
+	r.Post("/", shortener)
+	r.Get("/{id}", expander)
+	return r
 }

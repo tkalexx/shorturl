@@ -22,5 +22,7 @@ func run(cfg *config.Config) error {
 	fmt.Printf("Server running on: %s\n", cfg.RunAddr)
 	fmt.Printf("Base URL for shortened links: %s\n", cfg.BaseURL)
 
-	return http.ListenAndServe(cfg.RunAddr, http.HandlerFunc(handler.Router))
+	handler.SetBaseURL(cfg.BaseURL)
+
+	return http.ListenAndServe(cfg.RunAddr, handler.NewRouter())
 }
