@@ -2,10 +2,12 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"net/http"
 
 	"github.com/tkalexx/shorturl.git/internal/config"
 	"github.com/tkalexx/shorturl.git/internal/handler"
+	"github.com/tkalexx/shorturl.git/internal/repository"
 )
 
 func main() {
@@ -13,8 +15,7 @@ func main() {
 	cfg := config.NewConfig()
 
 	if err := run(cfg); err != nil {
-		fmt.Printf("unexpected error: %v\n", err)
-		return
+		log.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -22,7 +23,9 @@ func run(cfg *config.Config) error {
 	fmt.Printf("Server running on: %s\n", cfg.RunAddr)
 	fmt.Printf("Base URL for shortened links: %s\n", cfg.BaseURL)
 
-	handler.SetBaseURL(cfg.BaseURL)
+	repo := repository.NewInMemory()
+	service := handler.NewService(repo)
+	service.SetBaseURL(cfg.BaseURL)
 
-	return http.ListenAndServe(cfg.RunAddr, handler.NewRouter())
+	return http.ListenAndServe(cfg.RunAddr, handler.NewRouter(service))
 }

@@ -8,11 +8,14 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/tkalexx/shorturl.git/internal/repository"
 )
 
-func resetStorage() {
-	urls = make(map[string]string)
-	SetBaseURL("http://localhost:8080")
+func setupTestService() *Service {
+	repo := repository.NewInMemory()
+	service := NewService(repo)
+	service.SetBaseURL("http://localhost:8080")
+	return service
 }
 
 func TestGenerateID(t *testing.T) {
@@ -23,7 +26,8 @@ func TestGenerateID(t *testing.T) {
 }
 
 func TestShortener(t *testing.T) {
-	resetStorage()
+	service := setupTestService()
+	h := NewHandler(service)
 
 	tests := []struct {
 		name        string
@@ -75,7 +79,7 @@ func TestShortener(t *testing.T) {
 			req.Header.Set("Content-Type", tt.contentType)
 			rr := httptest.NewRecorder()
 
-			shortener(rr, req)
+			h.shortener(rr, req)
 
 			if rr.Code != tt.wantStatus {
 				t.Errorf("shortener() status = %v, want %v", rr.Code, tt.wantStatus)
@@ -92,12 +96,13 @@ func TestShortener(t *testing.T) {
 }
 
 func TestShortenerDuplicate(t *testing.T) {
-	resetStorage()
+	service := setupTestService()
+	h := NewHandler(service)
 
 	req1 := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("https://praktikum.yandex.ru"))
 	req1.Header.Set("Content-Type", "text/plain")
 	rr1 := httptest.NewRecorder()
-	shortener(rr1, req1)
+	h.shortener(rr1, req1)
 
 	if rr1.Code != http.StatusCreated {
 		t.Fatalf("first request failed: %d", rr1.Code)
@@ -107,7 +112,7 @@ func TestShortenerDuplicate(t *testing.T) {
 	req2 := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("https://praktikum.yandex.ru"))
 	req2.Header.Set("Content-Type", "text/plain")
 	rr2 := httptest.NewRecorder()
-	shortener(rr2, req2)
+	h.shortener(rr2, req2)
 
 	if rr2.Code != http.StatusCreated {
 		t.Errorf("second request failed: %d", rr2.Code)
@@ -119,12 +124,15 @@ func TestShortenerDuplicate(t *testing.T) {
 }
 
 func TestExpander(t *testing.T) {
-	resetStorage()
+	service := setupTestService()
+	h := NewHandler(service)
 
-	// Добавляем тестовый URL
-	testID := "abc123DEF"
-	testURL := "https://praktikum.yandex.ru"
-	urls[testID] = testURL
+	shortURL, _, err := service.Shorten("https://praktikum.yandex.ru")
+	if err != nil {
+		t.Fatalf("failed to create short URL: %v", err)
+	}
+	parts := strings.Split(shortURL, "/")
+	testID := parts[len(parts)-1]
 
 	tests := []struct {
 		name       string
@@ -136,7 +144,7 @@ func TestExpander(t *testing.T) {
 			name:       "existing URL",
 			id:         testID,
 			wantStatus: http.StatusTemporaryRedirect,
-			wantLoc:    testURL,
+			wantLoc:    "https://praktikum.yandex.ru",
 		},
 		{
 			name:       "non-existing URL",
@@ -145,7 +153,7 @@ func TestExpander(t *testing.T) {
 			wantLoc:    "",
 		},
 		{
-			name:       "empty path",
+			name:       "empty id",
 			id:         "",
 			wantStatus: http.StatusBadRequest,
 			wantLoc:    "",
@@ -161,7 +169,7 @@ func TestExpander(t *testing.T) {
 			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 
 			rr := httptest.NewRecorder()
-			expander(rr, req)
+			h.expander(rr, req)
 
 			if rr.Code != tt.wantStatus {
 				t.Errorf("expander() status = %v, want %v", rr.Code, tt.wantStatus)
@@ -177,10 +185,61 @@ func TestExpander(t *testing.T) {
 	}
 }
 
-func TestRouter(t *testing.T) {
-	resetStorage()
+func TestShortenJSON(t *testing.T) {
+	service := setupTestService()
+	h := NewHandler(service)
 
-	r := NewRouter()
+	tests := []struct {
+		name       string
+		body       string
+		wantStatus int
+	}{
+		{
+			name:       "valid JSON",
+			body:       `{"url":"https://ya.ru"}`,
+			wantStatus: http.StatusCreated,
+		},
+		{
+			name:       "empty URL",
+			body:       `{"url":""}`,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "invalid URL",
+			body:       `{"url":"not-a-url"}`,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "invalid JSON",
+			body:       `{"url":`,
+			wantStatus: http.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/api/shorten", strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", "application/json")
+			rr := httptest.NewRecorder()
+
+			h.shortenJSON(rr, req)
+
+			if rr.Code != tt.wantStatus {
+				t.Errorf("shortenJSON() status = %v, want %v", rr.Code, tt.wantStatus)
+			}
+
+			if tt.wantStatus == http.StatusCreated {
+				if ct := rr.Header().Get("Content-Type"); ct != "application/json" {
+					t.Errorf("Content-Type = %v, want application/json", ct)
+				}
+			}
+		})
+	}
+}
+
+func TestRouter(t *testing.T) {
+	service := setupTestService()
+	r := NewRouter(service)
 
 	tests := []struct {
 		name        string
@@ -191,7 +250,7 @@ func TestRouter(t *testing.T) {
 		wantStatus  int
 	}{
 		{
-			name:        "POST valid",
+			name:        "POST text/plain valid",
 			method:      http.MethodPost,
 			path:        "/",
 			body:        "https://ya.ru",
@@ -199,7 +258,15 @@ func TestRouter(t *testing.T) {
 			wantStatus:  http.StatusCreated,
 		},
 		{
-			name:       "GET non-existing id",
+			name:        "POST JSON valid",
+			method:      http.MethodPost,
+			path:        "/api/shorten",
+			body:        `{"url":"https://ya.ru"}`,
+			contentType: "application/json",
+			wantStatus:  http.StatusCreated,
+		},
+		{
+			name:       "GET existing (redirect)",
 			method:     http.MethodGet,
 			path:       "/nonexistent123",
 			wantStatus: http.StatusNotFound,
