@@ -2,6 +2,7 @@ package config
 
 import (
 	"flag"
+	"os"
 	"strings"
 )
 
@@ -19,6 +20,14 @@ func NewConfig() *Config {
 	flag.StringVar(&cfg.RunAddr, "a", ":8080", "address and port to run server (e.g., localhost:8888)")
 	flag.StringVar(&cfg.BaseURL, "b", "", "base URL for shortened links (e.g., http://localhost:8000/q)")
 	flag.Parse()
+
+	if envAddr := os.Getenv("SERVER_ADDRESS"); envAddr != "" {
+		cfg.RunAddr = envAddr
+	}
+
+	if envBaseURL := os.Getenv("BASE_URL"); envBaseURL != "" {
+		cfg.BaseURL = envBaseURL
+	}
 
 	if cfg.BaseURL == "" {
 		addr := cfg.RunAddr
