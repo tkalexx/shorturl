@@ -1,13 +1,13 @@
 package main
 
 import (
-	"fmt"
-	"log"
 	"net/http"
 
 	"github.com/tkalexx/shorturl.git/internal/config"
 	"github.com/tkalexx/shorturl.git/internal/handler"
+	"github.com/tkalexx/shorturl.git/internal/logger"
 	"github.com/tkalexx/shorturl.git/internal/repository"
+	"go.uber.org/zap"
 )
 
 func main() {
@@ -15,13 +15,19 @@ func main() {
 	cfg := config.NewConfig()
 
 	if err := run(cfg); err != nil {
-		log.Fatalf("unexpected error: %v", err)
+		panic(err)
 	}
 }
 
 func run(cfg *config.Config) error {
-	fmt.Printf("Server running on: %s\n", cfg.RunAddr)
-	fmt.Printf("Base URL for shortened links: %s\n", cfg.BaseURL)
+	if err := logger.Initialize("info"); err != nil {
+		return err
+	}
+
+	logger.Log.Info("Running server",
+		zap.String("address", cfg.RunAddr),
+		zap.String("base_url", cfg.BaseURL),
+	)
 
 	repo := repository.NewInMemory()
 	service := handler.NewService(repo)
