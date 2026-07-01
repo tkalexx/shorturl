@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -185,6 +186,60 @@ func TestExpander(t *testing.T) {
 	}
 }
 
+func TestShortenJSONContentTypeValidation(t *testing.T) {
+	service := setupTestService()
+	h := NewHandler(service)
+
+	tests := []struct {
+		name        string
+		contentType string
+		wantStatus  int
+	}{
+		{
+			name:        "valid application/json",
+			contentType: "application/json",
+			wantStatus:  http.StatusCreated,
+		},
+		{
+			name:        "valid with charset",
+			contentType: "application/json; charset=utf-8",
+			wantStatus:  http.StatusCreated,
+		},
+		{
+			name:        "invalid text/plain",
+			contentType: "text/plain",
+			wantStatus:  http.StatusBadRequest,
+		},
+		{
+			name:        "invalid text/html",
+			contentType: "text/html",
+			wantStatus:  http.StatusBadRequest,
+		},
+		{
+			name:        "missing content-type",
+			contentType: "",
+			wantStatus:  http.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := strings.NewReader(`{"url":"https://ya.ru"}`)
+			req := httptest.NewRequest(http.MethodPost, "/api/shorten", body)
+			if tt.contentType != "" {
+				req.Header.Set("Content-Type", tt.contentType)
+			}
+			rr := httptest.NewRecorder()
+
+			h.shortenJSON(rr, req)
+
+			if rr.Code != tt.wantStatus {
+				t.Errorf("got status %v, want %v", rr.Code, tt.wantStatus)
+			}
+		})
+	}
+}
+
 func TestShortenJSON(t *testing.T) {
 	service := setupTestService()
 	h := NewHandler(service)
@@ -234,6 +289,47 @@ func TestShortenJSON(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestShortenJSONResponseFormat(t *testing.T) {
+	service := setupTestService()
+	h := NewHandler(service)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/shorten", strings.NewReader(`{"url":"https://example.com"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+
+	h.shortenJSON(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Errorf("expected status 201, got %d", rr.Code)
+	}
+
+	contentType := rr.Header().Get("Content-Type")
+	if contentType != "application/json" {
+		t.Errorf("expected Content-Type application/json, got %s", contentType)
+	}
+
+	var resp ShortenResponse
+	if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+		t.Errorf("response is not valid JSON: %v", err)
+		return
+	}
+
+	if resp.Result == "" {
+		t.Error("Result field is empty")
+		return
+	}
+
+	expectedPrefix := "http://localhost:8080/"
+	if !strings.HasPrefix(resp.Result, expectedPrefix) {
+		t.Errorf("Result does not have expected prefix: got %s, want prefix %s", resp.Result, expectedPrefix)
+	}
+
+	parts := strings.Split(resp.Result, "/")
+	if len(parts) < 2 || len(parts[len(parts)-1]) != 8 {
+		t.Errorf("Short ID has wrong length in result: %s", resp.Result)
 	}
 }
 
