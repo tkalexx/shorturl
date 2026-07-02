@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -405,4 +407,105 @@ func TestRouter(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRouter_GzipCompression(t *testing.T) {
+	service := setupTestService()
+	r := NewRouter(service)
+
+	t.Run("response compressed for json with accept-encoding", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/shorten", strings.NewReader(`{"url":"https://ya.ru"}`))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept-Encoding", "gzip")
+		rr := httptest.NewRecorder()
+
+		r.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusCreated {
+			t.Errorf("expected status 201, got: %d", rr.Code)
+		}
+
+		if ce := rr.Header().Get("Content-Encoding"); ce != "gzip" {
+			t.Errorf("expected Content-Encoding: gzip, got: %s", ce)
+		}
+
+		// Распаковываем и проверяем содержимое
+		gr, err := gzip.NewReader(rr.Body)
+		if err != nil {
+			t.Fatalf("failed to create gzip reader: %v", err)
+		}
+		defer gr.Close()
+
+		var resp ShortenResponse
+		if err := json.NewDecoder(gr).Decode(&resp); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+
+		if !strings.HasPrefix(resp.Result, "http://localhost:8080/") {
+			t.Errorf("unexpected result: %s", resp.Result)
+		}
+	})
+
+	t.Run("response not compressed without accept-encoding", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/shorten", strings.NewReader(`{"url":"https://ya.ru"}`))
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+
+		r.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusCreated {
+			t.Errorf("expected status 201, got: %d", rr.Code)
+		}
+
+		if ce := rr.Header().Get("Content-Encoding"); ce != "" {
+			t.Errorf("expected no Content-Encoding, got: %s", ce)
+		}
+
+		// Проверяем обычный JSON
+		var resp ShortenResponse
+		if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+	})
+
+	t.Run("decompress gzip request body", func(t *testing.T) {
+		originalBody := `{"url":"https://compressed-request.com"}`
+
+		// Сжимаем тело запроса
+		var compressed bytes.Buffer
+		gw := gzip.NewWriter(&compressed)
+		gw.Write([]byte(originalBody))
+		gw.Close()
+
+		req := httptest.NewRequest(http.MethodPost, "/api/shorten", &compressed)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Content-Encoding", "gzip")
+		req.Header.Set("Accept-Encoding", "gzip")
+		rr := httptest.NewRecorder()
+
+		r.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusCreated {
+			t.Errorf("expected status 201, got: %d", rr.Code)
+		}
+
+		// Распаковываем ответ
+		gr, err := gzip.NewReader(rr.Body)
+		if err != nil {
+			t.Fatalf("failed to create gzip reader: %v", err)
+		}
+		defer gr.Close()
+
+		var resp ShortenResponse
+		if err := json.NewDecoder(gr).Decode(&resp); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+
+		if !strings.HasSuffix(resp.Result, "compressed-request.com") {
+			// Id будет разным, но URL должен быть валидным
+			if !strings.HasPrefix(resp.Result, "http://localhost:8080/") {
+				t.Errorf("unexpected result format: %s", resp.Result)
+			}
+		}
+	})
 }

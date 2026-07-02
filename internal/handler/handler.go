@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/tkalexx/shorturl.git/internal/gzip"
 	"github.com/tkalexx/shorturl.git/internal/logger"
 	"github.com/tkalexx/shorturl.git/internal/repository"
 )
@@ -154,6 +155,7 @@ func mapError(w http.ResponseWriter, err error) {
 func NewRouter(service *Service) chi.Router {
 	r := chi.NewRouter()
 	r.Use(logger.LoggingMiddleware)
+	r.Use(gzip.Middleware)
 
 	h := NewHandler(service)
 
