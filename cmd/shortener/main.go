@@ -24,14 +24,30 @@ func run(cfg *config.Config) error {
 		return err
 	}
 
+	// Выбираем тип хранилища в зависимости от конфигурации
+	var repo repository.Repository
+	if cfg.FileStoragePath != "" {
+		// Файловое хранилище с сохранением на диск
+		fileRepo, err := repository.NewFileRepository(cfg.FileStoragePath)
+		if err != nil {
+			logger.Log.Fatal("Failed to initialize file storage", zap.Error(err))
+			return err
+		}
+		repo = fileRepo
+		logger.Log.Info("Using file storage", zap.String("path", cfg.FileStoragePath))
+	} else {
+		// In-memory хранилище
+		repo = repository.NewInMemory()
+		logger.Log.Info("Using in-memory storage")
+	}
+
+	service := handler.NewService(repo)
+	service.SetBaseURL(cfg.BaseURL)
+
 	logger.Log.Info("Running server",
 		zap.String("address", cfg.RunAddr),
 		zap.String("base_url", cfg.BaseURL),
 	)
-
-	repo := repository.NewInMemory()
-	service := handler.NewService(repo)
-	service.SetBaseURL(cfg.BaseURL)
 
 	return http.ListenAndServe(cfg.RunAddr, handler.NewRouter(service))
 }

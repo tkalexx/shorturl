@@ -8,8 +8,9 @@ import (
 
 // Config хранит настройки сервиса
 type Config struct {
-	RunAddr string // адрес и порт
-	BaseURL string // базовый адрес сокращенных ссылок
+	RunAddr         string // адрес и порт
+	BaseURL         string // базовый адрес сокращенных ссылок
+	FileStoragePath string // путь к файлу хранения URL
 }
 
 // NewConfig инициализирует и парсит флаги командной строки
@@ -19,6 +20,7 @@ func NewConfig() *Config {
 	// Регистрируем флаги
 	flag.StringVar(&cfg.RunAddr, "a", ":8080", "address and port to run server (e.g., localhost:8888)")
 	flag.StringVar(&cfg.BaseURL, "b", "", "base URL for shortened links (e.g., http://localhost:8000/q)")
+	flag.StringVar(&cfg.FileStoragePath, "file-storage-path", "/tmp/short-url-db.json", "path to file storage for URLs")
 	flag.Parse()
 
 	if envAddr := os.Getenv("SERVER_ADDRESS"); envAddr != "" {
@@ -27,6 +29,14 @@ func NewConfig() *Config {
 
 	if envBaseURL := os.Getenv("BASE_URL"); envBaseURL != "" {
 		cfg.BaseURL = envBaseURL
+	}
+
+	if envFilePath := os.Getenv("FILE_STORAGE_PATH"); envFilePath != "" {
+		cfg.FileStoragePath = envFilePath
+	}
+
+	if cfg.FileStoragePath == "" {
+		cfg.FileStoragePath = "/tmp/short-url-db.json"
 	}
 
 	if cfg.BaseURL == "" {
