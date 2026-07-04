@@ -31,7 +31,6 @@ func run(cfg *config.Config) error {
 		fileRepo, err := repository.NewFileRepository(cfg.FileStoragePath)
 		if err != nil {
 			logger.Log.Fatal("Failed to initialize file storage", zap.Error(err))
-			return err
 		}
 		repo = fileRepo
 		logger.Log.Info("Using file storage", zap.String("path", cfg.FileStoragePath))

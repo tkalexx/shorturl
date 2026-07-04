@@ -2,7 +2,9 @@ package repository
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"sync"
 )
@@ -51,7 +53,7 @@ func (r *FileRepository) load() error {
 
 	var records []fileRecord
 	if err := json.NewDecoder(file).Decode(&records); err != nil {
-		if err.Error() == "EOF" {
+		if errors.Is(err, io.EOF) {
 			return nil
 		}
 		return err
