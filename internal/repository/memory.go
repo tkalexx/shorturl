@@ -2,6 +2,7 @@ package repository
 
 import "sync"
 
+// InMemory — простое in-memory хранилище без сохранения на диск
 type InMemory struct {
 	mu   sync.RWMutex
 	urls map[string]string
