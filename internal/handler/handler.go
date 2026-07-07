@@ -1,19 +1,24 @@
 package handler
 
 import (
+	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/tkalexx/shorturl.git/internal/gzip"
 	"github.com/tkalexx/shorturl.git/internal/logger"
 	"github.com/tkalexx/shorturl.git/internal/repository"
+	"go.uber.org/zap"
 )
 
 var (
@@ -25,10 +30,22 @@ var (
 type Service struct {
 	repo    repository.Repository
 	baseURL string
+	db      *sql.DB
 }
 
-func NewService(repo repository.Repository) *Service {
-	return &Service{repo: repo}
+func NewService(repo repository.Repository, db *sql.DB) *Service {
+	return &Service{
+		repo: repo,
+		db:   db,
+	}
+}
+
+// Ping проверяет соединение с БД
+func (s *Service) Ping(ctx context.Context) error {
+	if s.db == nil {
+		return fmt.Errorf("database connection not initialized")
+	}
+	return s.db.PingContext(ctx)
 }
 
 func (s *Service) SetBaseURL(url string) {
@@ -100,6 +117,19 @@ func generateID() string {
 	return base64.URLEncoding.EncodeToString(b)[:8]
 }
 
+// ping handler для GET /ping
+func (h *Handler) ping(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	if err := h.service.Ping(ctx); err != nil {
+		logger.Log.Error("Database ping failed", zap.Error(err))
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
+
 // shortener возвращает сокращённый URL
 func (h *Handler) shortener(w http.ResponseWriter, r *http.Request) {
 	if !strings.HasPrefix(r.Header.Get("Content-Type"), "text/plain") {
@@ -159,6 +189,7 @@ func NewRouter(service *Service) chi.Router {
 
 	h := NewHandler(service)
 
+	r.Get("/ping", h.ping)
 	r.Post("/", h.shortener)
 	r.Get("/{id}", h.expander)
 	r.Post("/api/shorten", h.shortenJSON)
