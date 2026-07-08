@@ -1,6 +1,13 @@
 package repository
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+var (
+	ErrURLExists = errors.New("url already exists")
+)
 
 type URLPair struct {
 	ID  string

@@ -31,7 +31,7 @@ func (r *PostgresRepository) SaveBatch(ctx context.Context, urls []URLPair) erro
 	stmt, err := tx.PrepareContext(ctx, `
 		INSERT INTO urls (id, original_url) 
 		VALUES ($1, $2)
-		ON CONFLICT (id) DO NOTHING
+		ON CONFLICT (original_url) DO NOTHING
 	`)
 	if err != nil {
 		return err
@@ -47,15 +47,17 @@ func (r *PostgresRepository) SaveBatch(ctx context.Context, urls []URLPair) erro
 	return tx.Commit()
 }
 
-// миграция создаёт таблицы если их нет
 func (r *PostgresRepository) migrate() error {
+	// Создаём таблицу и уникальный индекс на original_url
 	query := `
 	CREATE TABLE IF NOT EXISTS urls (
 		id VARCHAR(255) PRIMARY KEY,
-		original_url TEXT NOT NULL UNIQUE,
+		original_url TEXT NOT NULL,
 		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 	);
-	CREATE INDEX IF NOT EXISTS idx_original_url ON urls(original_url);
+	
+	-- Уникальный индекс для избежания дубликатов и race conditions
+	CREATE UNIQUE INDEX IF NOT EXISTS idx_original_url_unique ON urls(original_url);
 	`
 	_, err := r.db.Exec(query)
 	return err
@@ -63,12 +65,21 @@ func (r *PostgresRepository) migrate() error {
 
 func (r *PostgresRepository) Save(ctx context.Context, id, url string) error {
 	query := `
-	INSERT INTO urls (id, original_url) 
-	VALUES ($1, $2)
-	ON CONFLICT (id) DO UPDATE SET original_url = EXCLUDED.original_url
+		INSERT INTO urls (id, original_url) 
+		VALUES ($1, $2)
+		ON CONFLICT (original_url) DO NOTHING
 	`
-	_, err := r.db.ExecContext(ctx, query, id, url)
-	return err
+	res, err := r.db.ExecContext(ctx, query, id, url)
+	if err != nil {
+		return err
+	}
+
+	rowsAffected, _ := res.RowsAffected()
+	if rowsAffected == 0 {
+		return ErrURLExists
+	}
+
+	return nil
 }
 
 func (r *PostgresRepository) Get(ctx context.Context, id string) (string, bool) {

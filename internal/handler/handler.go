@@ -73,19 +73,17 @@ func (s *Service) Shorten(ctx context.Context, originalURL string) (string, bool
 		return "", false, ErrInvalidURL
 	}
 
-	if id, found := s.repo.FindByURL(ctx, originalURL); found {
-		return s.baseURL + "/" + id, true, nil
-	}
+	id := generateID()
 
-	var id string
-	for {
-		id = generateID()
-		if _, exists := s.repo.Get(ctx, id); !exists {
-			break
+	err = s.repo.Save(ctx, id, originalURL)
+	if err != nil {
+		if errors.Is(err, repository.ErrURLExists) {
+			existingID, found := s.repo.FindByURL(ctx, originalURL)
+			if !found {
+				return "", false, fmt.Errorf("inconsistent state: URL exists but not found")
+			}
+			return s.baseURL + "/" + existingID, true, nil
 		}
-	}
-
-	if err := s.repo.Save(ctx, id, originalURL); err != nil {
 		return "", false, err
 	}
 
@@ -214,14 +212,20 @@ func (h *Handler) shortener(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	shortURL, _, err := h.service.Shorten(r.Context(), string(b))
+	shortURL, exists, err := h.service.Shorten(r.Context(), string(b))
 	if err != nil {
 		mapError(w, err)
 		return
 	}
 
 	w.Header().Set("Content-Type", "text/plain")
-	w.WriteHeader(http.StatusCreated)
+
+	if exists {
+		w.WriteHeader(http.StatusConflict)
+	} else {
+		w.WriteHeader(http.StatusCreated)
+	}
+
 	w.Write([]byte(shortURL))
 }
 
@@ -314,14 +318,20 @@ func (h *Handler) shortenJSON(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	shortURL, _, err := h.service.Shorten(r.Context(), req.URL)
+	shortURL, exists, err := h.service.Shorten(r.Context(), req.URL)
 	if err != nil {
 		mapError(w, err)
 		return
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
+
+	if exists {
+		w.WriteHeader(http.StatusConflict)
+	} else {
+		w.WriteHeader(http.StatusCreated)
+	}
+
 	resp := ShortenResponse{Result: shortURL}
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
