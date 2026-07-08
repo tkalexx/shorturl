@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -90,7 +91,7 @@ func (r *FileRepository) save() error {
 	return encoder.Encode(records)
 }
 
-func (r *FileRepository) Save(id, url string) error {
+func (r *FileRepository) Save(_ context.Context, id, url string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -105,7 +106,7 @@ func (r *FileRepository) Save(id, url string) error {
 	return r.save()
 }
 
-func (r *FileRepository) Get(id string) (string, bool) {
+func (r *FileRepository) Get(_ context.Context, id string) (string, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	rec, ok := r.storage[id]
@@ -115,7 +116,7 @@ func (r *FileRepository) Get(id string) (string, bool) {
 	return rec.OriginalURL, true
 }
 
-func (r *FileRepository) FindByURL(url string) (string, bool) {
+func (r *FileRepository) FindByURL(_ context.Context, url string) (string, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	id, ok := r.reverse[url]

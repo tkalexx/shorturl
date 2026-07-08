@@ -31,34 +31,30 @@ func run(cfg *config.Config) error {
 		dbConn *sql.DB
 		err    error
 	)
-
-	if cfg.DatabaseDSN != "" {
+	switch {
+	case cfg.DatabaseDSN != "":
 		dbConn, err = db.NewDB(cfg.DatabaseDSN)
 		if err != nil {
 			logger.Log.Fatal("Failed to connect to database", zap.Error(err))
 		}
 		defer dbConn.Close()
-		logger.Log.Info("Connected to database", zap.String("dsn", cfg.DatabaseDSN))
-	}
 
-	// Выбираем тип хранилища в зависимости от конфигурации
-	if cfg.FileStoragePath != "" && cfg.DatabaseDSN == "" {
-		// Файловое хранилище с сохранением на диск
+		pgRepo, err := repository.NewPostgresRepository(dbConn)
+		if err != nil {
+			logger.Log.Fatal("Failed to initialize postgres repository", zap.Error(err))
+		}
+		repo = pgRepo
+		logger.Log.Info("Using PostgreSQL storage")
+	case cfg.FileStoragePath != "":
 		fileRepo, err := repository.NewFileRepository(cfg.FileStoragePath)
 		if err != nil {
 			logger.Log.Fatal("Failed to initialize file storage", zap.Error(err))
 		}
 		repo = fileRepo
 		logger.Log.Info("Using file storage", zap.String("path", cfg.FileStoragePath))
-	} else if cfg.DatabaseDSN == "" {
-		// In-memory хранилище
+	default:
 		repo = repository.NewInMemory()
 		logger.Log.Info("Using in-memory storage")
-	} else {
-		// Когда нужно использовать БД как основное хранилище:
-		// repo = repository.NewDBRepository(dbConn)
-		repo = repository.NewInMemory()
-		logger.Log.Info("Using in-memory storage (DB connected for ping only)")
 	}
 
 	service := handler.NewService(repo, dbConn)

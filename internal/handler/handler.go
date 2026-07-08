@@ -52,7 +52,7 @@ func (s *Service) SetBaseURL(url string) {
 	s.baseURL = strings.TrimSuffix(url, "/")
 }
 
-func (s *Service) Shorten(originalURL string) (string, bool, error) {
+func (s *Service) Shorten(ctx context.Context, originalURL string) (string, bool, error) {
 	originalURL = strings.TrimSpace(originalURL)
 	if originalURL == "" {
 		return "", false, ErrEmptyURL
@@ -63,30 +63,30 @@ func (s *Service) Shorten(originalURL string) (string, bool, error) {
 		return "", false, ErrInvalidURL
 	}
 
-	if id, found := s.repo.FindByURL(originalURL); found {
+	if id, found := s.repo.FindByURL(ctx, originalURL); found {
 		return s.baseURL + "/" + id, true, nil
 	}
 
 	var id string
 	for {
 		id = generateID()
-		if _, exists := s.repo.Get(id); !exists {
+		if _, exists := s.repo.Get(ctx, id); !exists {
 			break
 		}
 	}
 
-	if err := s.repo.Save(id, originalURL); err != nil {
+	if err := s.repo.Save(ctx, id, originalURL); err != nil {
 		return "", false, err
 	}
 
 	return s.baseURL + "/" + id, false, nil
 }
 
-func (s *Service) Get(id string) (string, error) {
+func (s *Service) Get(ctx context.Context, id string) (string, error) {
 	if id == "" {
 		return "", ErrEmptyURL
 	}
-	if url, ok := s.repo.Get(id); ok {
+	if url, ok := s.repo.Get(ctx, id); ok {
 		return url, nil
 	}
 	return "", ErrURLNotFound
@@ -143,7 +143,7 @@ func (h *Handler) shortener(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	shortURL, _, err := h.service.Shorten(string(b))
+	shortURL, _, err := h.service.Shorten(r.Context(), string(b))
 	if err != nil {
 		mapError(w, err)
 		return
@@ -157,7 +157,7 @@ func (h *Handler) shortener(w http.ResponseWriter, r *http.Request) {
 // expander возвращает оригинальный URL
 func (h *Handler) expander(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	originalURL, err := h.service.Get(id)
+	originalURL, err := h.service.Get(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, ErrURLNotFound) {
 			http.Error(w, "URL not found", http.StatusNotFound)
@@ -211,7 +211,7 @@ func (h *Handler) shortenJSON(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	shortURL, _, err := h.service.Shorten(req.URL)
+	shortURL, _, err := h.service.Shorten(r.Context(), req.URL)
 	if err != nil {
 		mapError(w, err)
 		return
