@@ -16,7 +16,7 @@ import (
 
 func setupTestService() *Service {
 	repo := repository.NewInMemory()
-	service := NewService(repo)
+	service := NewService(repo, nil)
 	service.SetBaseURL("http://localhost:8080")
 	return service
 }
@@ -117,8 +117,8 @@ func TestShortenerDuplicate(t *testing.T) {
 	rr2 := httptest.NewRecorder()
 	h.shortener(rr2, req2)
 
-	if rr2.Code != http.StatusCreated {
-		t.Errorf("second request failed: %d", rr2.Code)
+	if rr2.Code != http.StatusConflict {
+		t.Errorf("second request expected 409 Conflict, got: %d", rr2.Code)
 	}
 
 	if rr2.Body.String() != firstID {
@@ -130,7 +130,7 @@ func TestExpander(t *testing.T) {
 	service := setupTestService()
 	h := NewHandler(service)
 
-	shortURL, _, err := service.Shorten("https://praktikum.yandex.ru")
+	shortURL, _, err := service.Shorten(context.Background(), "https://praktikum.yandex.ru")
 	if err != nil {
 		t.Fatalf("failed to create short URL: %v", err)
 	}
@@ -195,21 +195,25 @@ func TestShortenJSONContentTypeValidation(t *testing.T) {
 	tests := []struct {
 		name        string
 		contentType string
+		body        string
 		wantStatus  int
 	}{
 		{
 			name:        "valid application/json",
 			contentType: "application/json",
+			body:        `{"url":"https://json-test1.ya.ru"}`,
 			wantStatus:  http.StatusCreated,
 		},
 		{
 			name:        "valid with charset",
 			contentType: "application/json; charset=utf-8",
+			body:        `{"url":"https://json-test2.ya.ru"}`,
 			wantStatus:  http.StatusCreated,
 		},
 		{
 			name:        "invalid text/plain",
 			contentType: "text/plain",
+			body:        `{"url":"https://json-test3.ya.ru"}`,
 			wantStatus:  http.StatusBadRequest,
 		},
 		{
@@ -226,11 +230,8 @@ func TestShortenJSONContentTypeValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			body := strings.NewReader(`{"url":"https://ya.ru"}`)
-			req := httptest.NewRequest(http.MethodPost, "/api/shorten", body)
-			if tt.contentType != "" {
-				req.Header.Set("Content-Type", tt.contentType)
-			}
+			req := httptest.NewRequest(http.MethodPost, "/api/shorten", strings.NewReader(tt.body))
+			req.Header.Set("Content-Type", tt.contentType)
 			rr := httptest.NewRecorder()
 
 			h.shortenJSON(rr, req)
@@ -359,7 +360,7 @@ func TestRouter(t *testing.T) {
 			name:        "POST JSON valid",
 			method:      http.MethodPost,
 			path:        "/api/shorten",
-			body:        `{"url":"https://ya.ru"}`,
+			body:        `{"url":"https://router-json.ya.ru"}`,
 			contentType: "application/json",
 			wantStatus:  http.StatusCreated,
 		},
@@ -414,7 +415,7 @@ func TestRouter_GzipCompression(t *testing.T) {
 	r := NewRouter(service)
 
 	t.Run("response compressed for json with accept-encoding", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/shorten", strings.NewReader(`{"url":"https://ya.ru"}`))
+		req := httptest.NewRequest(http.MethodPost, "/api/shorten", strings.NewReader(`{"url":"https://gzip1.ya.ru"}`))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Accept-Encoding", "gzip")
 		rr := httptest.NewRecorder()
@@ -447,7 +448,7 @@ func TestRouter_GzipCompression(t *testing.T) {
 	})
 
 	t.Run("response not compressed without accept-encoding", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodPost, "/api/shorten", strings.NewReader(`{"url":"https://ya.ru"}`))
+		req := httptest.NewRequest(http.MethodPost, "/api/shorten", strings.NewReader(`{"url":"https://gzip2.ya.ru"}`))
 		req.Header.Set("Content-Type", "application/json")
 		rr := httptest.NewRecorder()
 
@@ -469,7 +470,7 @@ func TestRouter_GzipCompression(t *testing.T) {
 	})
 
 	t.Run("decompress gzip request body", func(t *testing.T) {
-		originalBody := `{"url":"https://compressed-request.com"}`
+		originalBody := `{"url":"https://gzip3.ya.ru"}`
 
 		// Сжимаем тело запроса
 		var compressed bytes.Buffer
