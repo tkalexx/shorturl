@@ -17,6 +17,15 @@ func NewInMemory() Repository {
 	}
 }
 
+func (m *InMemory) SaveBatch(_ context.Context, urls []URLPair) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, pair := range urls {
+		m.urls[pair.ID] = pair.URL
+	}
+	return nil
+}
+
 func (m *InMemory) Save(_ context.Context, id, url string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

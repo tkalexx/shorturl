@@ -21,6 +21,32 @@ func NewPostgresRepository(db *sql.DB) (Repository, error) {
 	return repo, nil
 }
 
+func (r *PostgresRepository) SaveBatch(ctx context.Context, urls []URLPair) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.PrepareContext(ctx, `
+		INSERT INTO urls (id, original_url) 
+		VALUES ($1, $2)
+		ON CONFLICT (id) DO NOTHING
+	`)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for _, pair := range urls {
+		if _, err := stmt.ExecContext(ctx, pair.ID, pair.URL); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit()
+}
+
 // миграция создаёт таблицы если их нет
 func (r *PostgresRepository) migrate() error {
 	query := `

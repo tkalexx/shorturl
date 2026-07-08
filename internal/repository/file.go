@@ -91,6 +91,23 @@ func (r *FileRepository) save() error {
 	return encoder.Encode(records)
 }
 
+func (r *FileRepository) SaveBatch(_ context.Context, urls []URLPair) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	for _, pair := range urls {
+		r.counter++
+		r.storage[pair.ID] = &fileRecord{
+			UUID:        fmt.Sprintf("%d", r.counter),
+			ShortURL:    pair.ID,
+			OriginalURL: pair.URL,
+		}
+		r.reverse[pair.URL] = pair.ID
+	}
+
+	return r.save()
+}
+
 func (r *FileRepository) Save(_ context.Context, id, url string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

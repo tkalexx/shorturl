@@ -40,6 +40,16 @@ func NewService(repo repository.Repository, db *sql.DB) *Service {
 	}
 }
 
+type BatchItem struct {
+	CorrelationID string `json:"correlation_id"`
+	OriginalURL   string `json:"original_url"`
+}
+
+type BatchResponseItem struct {
+	CorrelationID string `json:"correlation_id"`
+	ShortURL      string `json:"short_url"`
+}
+
 // Ping проверяет соединение с БД
 func (s *Service) Ping(ctx context.Context) error {
 	if s.db == nil {
@@ -80,6 +90,67 @@ func (s *Service) Shorten(ctx context.Context, originalURL string) (string, bool
 	}
 
 	return s.baseURL + "/" + id, false, nil
+}
+
+func (s *Service) ShortenBatch(ctx context.Context, items []BatchItem) ([]BatchResponseItem, error) {
+	if len(items) == 0 {
+		return []BatchResponseItem{}, nil
+	}
+
+	// Проверка на дубликаты внутри батча и подготовка данных
+	seenURLs := make(map[string]string) // original_url -> short_id
+	toSave := make([]repository.URLPair, 0, len(items))
+	result := make([]BatchResponseItem, 0, len(items))
+
+	for _, item := range items {
+		originalURL := strings.TrimSpace(item.OriginalURL)
+		if originalURL == "" {
+			return nil, ErrEmptyURL
+		}
+
+		parsedURL, err := url.ParseRequestURI(originalURL)
+		if err != nil || parsedURL.Scheme == "" || parsedURL.Host == "" {
+			return nil, ErrInvalidURL
+		}
+
+		// Проверяем, не обрабатывали ли уже этот URL в текущем батче
+		if shortID, exists := seenURLs[originalURL]; exists {
+			result = append(result, BatchResponseItem{
+				CorrelationID: item.CorrelationID,
+				ShortURL:      s.baseURL + "/" + shortID,
+			})
+			continue
+		}
+
+		var id string
+		if existingID, found := s.repo.FindByURL(ctx, originalURL); found {
+			id = existingID
+		} else {
+			// Генерируем новый ID
+			for {
+				id = generateID()
+				if _, exists := s.repo.Get(ctx, id); !exists {
+					break
+				}
+			}
+			toSave = append(toSave, repository.URLPair{ID: id, URL: originalURL})
+		}
+
+		seenURLs[originalURL] = id
+		result = append(result, BatchResponseItem{
+			CorrelationID: item.CorrelationID,
+			ShortURL:      s.baseURL + "/" + id,
+		})
+	}
+
+	// Атомарное сохранение всех новых URL
+	if len(toSave) > 0 {
+		if err := s.repo.SaveBatch(ctx, toSave); err != nil {
+			return nil, err
+		}
+	}
+
+	return result, nil
 }
 
 func (s *Service) Get(ctx context.Context, id string) (string, error) {
@@ -154,6 +225,37 @@ func (h *Handler) shortener(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(shortURL))
 }
 
+func (h *Handler) shortenBatch(w http.ResponseWriter, r *http.Request) {
+	contentType := r.Header.Get("Content-Type")
+	if !strings.HasPrefix(contentType, "application/json") {
+		http.Error(w, "Content-Type must be application/json", http.StatusBadRequest)
+		return
+	}
+
+	var req []BatchItem
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	if len(req) == 0 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		w.Write([]byte("[]"))
+		return
+	}
+
+	resp, err := h.service.ShortenBatch(r.Context(), req)
+	if err != nil {
+		mapError(w, err)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(resp)
+}
+
 // expander возвращает оригинальный URL
 func (h *Handler) expander(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
@@ -193,6 +295,7 @@ func NewRouter(service *Service) chi.Router {
 	r.Post("/", h.shortener)
 	r.Get("/{id}", h.expander)
 	r.Post("/api/shorten", h.shortenJSON)
+	r.Post("/api/shorten/batch", h.shortenBatch)
 
 	return r
 }
