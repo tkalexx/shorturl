@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"net/http"
 
+	"github.com/golang-migrate/migrate/v4"
+	"github.com/golang-migrate/migrate/v4/database/postgres"
 	"github.com/tkalexx/shorturl.git/internal/config"
 	"github.com/tkalexx/shorturl.git/internal/db"
 	"github.com/tkalexx/shorturl.git/internal/handler"
@@ -39,6 +41,10 @@ func run(cfg *config.Config) error {
 		}
 		defer dbConn.Close()
 
+		if err := runMigrations(dbConn); err != nil {
+			logger.Log.Fatal("Failed to run migrations", zap.Error(err))
+		}
+
 		pgRepo, err := repository.NewPostgresRepository(dbConn)
 		if err != nil {
 			logger.Log.Fatal("Failed to initialize postgres repository", zap.Error(err))
@@ -57,7 +63,7 @@ func run(cfg *config.Config) error {
 		logger.Log.Info("Using in-memory storage")
 	}
 
-	service := handler.NewService(repo, dbConn)
+	service := handler.NewService(repo)
 	service.SetBaseURL(cfg.BaseURL)
 
 	logger.Log.Info("Running server",
@@ -66,4 +72,25 @@ func run(cfg *config.Config) error {
 	)
 
 	return http.ListenAndServe(cfg.RunAddr, handler.NewRouter(service))
+}
+
+func runMigrations(db *sql.DB) error {
+	driver, err := postgres.WithInstance(db, &postgres.Config{})
+	if err != nil {
+		return err
+	}
+
+	m, err := migrate.NewWithDatabaseInstance(
+		"file://migrations",
+		"postgres",
+		driver,
+	)
+	if err != nil {
+		return err
+	}
+
+	if err := m.Up(); err != nil && err != migrate.ErrNoChange {
+		return err
+	}
+	return nil
 }

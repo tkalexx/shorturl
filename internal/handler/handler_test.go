@@ -16,7 +16,7 @@ import (
 
 func setupTestService() *Service {
 	repo := repository.NewInMemory()
-	service := NewService(repo, nil)
+	service := NewService(repo)
 	service.SetBaseURL("http://localhost:8080")
 	return service
 }

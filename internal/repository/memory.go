@@ -19,13 +19,20 @@ func NewInMemory() Repository {
 	}
 }
 
-func (m *InMemory) SaveBatch(_ context.Context, urls []URLPair) error {
+func (m *InMemory) SaveBatch(ctx context.Context, urls []URLPair) (map[string]string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	result := make(map[string]string)
 	for _, pair := range urls {
 		m.urls[pair.ID] = pair.URL
 		m.reverse[pair.URL] = pair.ID
+		result[pair.URL] = pair.ID
 	}
+	return result, nil
+}
+
+func (m *InMemory) Ping(ctx context.Context) error {
 	return nil
 }
 

@@ -3,7 +3,6 @@ package handler
 import (
 	"context"
 	"crypto/rand"
-	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -30,13 +29,11 @@ var (
 type Service struct {
 	repo    repository.Repository
 	baseURL string
-	db      *sql.DB
 }
 
-func NewService(repo repository.Repository, db *sql.DB) *Service {
+func NewService(repo repository.Repository) *Service {
 	return &Service{
 		repo: repo,
-		db:   db,
 	}
 }
 
@@ -52,10 +49,10 @@ type BatchResponseItem struct {
 
 // Ping проверяет соединение с БД
 func (s *Service) Ping(ctx context.Context) error {
-	if s.db == nil {
-		return fmt.Errorf("database connection not initialized")
+	if s.repo == nil {
+		return fmt.Errorf("repository not initialized")
 	}
-	return s.db.PingContext(ctx)
+	return s.repo.Ping(ctx)
 }
 
 func (s *Service) SetBaseURL(url string) {
@@ -95,59 +92,34 @@ func (s *Service) ShortenBatch(ctx context.Context, items []BatchItem) ([]BatchR
 		return []BatchResponseItem{}, nil
 	}
 
-	// Проверка на дубликаты внутри батча и подготовка данных
-	seenURLs := make(map[string]string) // original_url -> short_id
-	toSave := make([]repository.URLPair, 0, len(items))
-	result := make([]BatchResponseItem, 0, len(items))
-
-	for _, item := range items {
+	pairs := make([]repository.URLPair, len(items))
+	for i, item := range items {
 		originalURL := strings.TrimSpace(item.OriginalURL)
 		if originalURL == "" {
 			return nil, ErrEmptyURL
 		}
-
-		parsedURL, err := url.ParseRequestURI(originalURL)
-		if err != nil || parsedURL.Scheme == "" || parsedURL.Host == "" {
+		if _, err := url.ParseRequestURI(originalURL); err != nil {
 			return nil, ErrInvalidURL
 		}
 
-		// Проверяем, не обрабатывали ли уже этот URL в текущем батче
-		if shortID, exists := seenURLs[originalURL]; exists {
-			result = append(result, BatchResponseItem{
-				CorrelationID: item.CorrelationID,
-				ShortURL:      s.baseURL + "/" + shortID,
-			})
-			continue
+		pairs[i] = repository.URLPair{
+			ID:  generateID(),
+			URL: originalURL,
 		}
+	}
 
-		var id string
-		if existingID, found := s.repo.FindByURL(ctx, originalURL); found {
-			id = existingID
-		} else {
-			// Генерируем новый ID
-			for {
-				id = generateID()
-				if _, exists := s.repo.Get(ctx, id); !exists {
-					break
-				}
-			}
-			toSave = append(toSave, repository.URLPair{ID: id, URL: originalURL})
-		}
+	mapping, err := s.repo.SaveBatch(ctx, pairs)
+	if err != nil {
+		return nil, err
+	}
 
-		seenURLs[originalURL] = id
-		result = append(result, BatchResponseItem{
+	result := make([]BatchResponseItem, len(items))
+	for i, item := range items {
+		result[i] = BatchResponseItem{
 			CorrelationID: item.CorrelationID,
-			ShortURL:      s.baseURL + "/" + id,
-		})
-	}
-
-	// Атомарное сохранение всех новых URL
-	if len(toSave) > 0 {
-		if err := s.repo.SaveBatch(ctx, toSave); err != nil {
-			return nil, err
+			ShortURL:      s.baseURL + "/" + mapping[item.OriginalURL],
 		}
 	}
-
 	return result, nil
 }
 

@@ -4,9 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/lib/pq"
 )
 
 type PostgresRepository struct {
@@ -15,52 +15,60 @@ type PostgresRepository struct {
 
 func NewPostgresRepository(db *sql.DB) (Repository, error) {
 	repo := &PostgresRepository{db: db}
-	if err := repo.migrate(); err != nil {
-		return nil, fmt.Errorf("failed to run migrations: %w", err)
-	}
 	return repo, nil
 }
 
-func (r *PostgresRepository) SaveBatch(ctx context.Context, urls []URLPair) error {
+func (r *PostgresRepository) SaveBatch(ctx context.Context, urls []URLPair) (map[string]string, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer tx.Rollback()
 
 	stmt, err := tx.PrepareContext(ctx, `
-		INSERT INTO urls (id, original_url) 
-		VALUES ($1, $2)
-		ON CONFLICT (original_url) DO NOTHING
-	`)
+        INSERT INTO urls (id, original_url) 
+        VALUES ($1, $2)
+        ON CONFLICT (original_url) DO NOTHING
+    `)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer stmt.Close()
 
 	for _, pair := range urls {
 		if _, err := stmt.ExecContext(ctx, pair.ID, pair.URL); err != nil {
-			return err
+			stmt.Close()
+			return nil, err
 		}
 	}
+	stmt.Close()
 
-	return tx.Commit()
-}
+	originalURLs := make([]string, len(urls))
+	for i, pair := range urls {
+		originalURLs[i] = pair.URL
+	}
 
-func (r *PostgresRepository) migrate() error {
-	// Создаём таблицу и уникальный индекс на original_url
-	query := `
-	CREATE TABLE IF NOT EXISTS urls (
-		id VARCHAR(255) PRIMARY KEY,
-		original_url TEXT NOT NULL,
-		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-	);
-	
-	-- Уникальный индекс для избежания дубликатов и race conditions
-	CREATE UNIQUE INDEX IF NOT EXISTS idx_original_url_unique ON urls(original_url);
-	`
-	_, err := r.db.Exec(query)
-	return err
+	rows, err := tx.QueryContext(ctx,
+		`SELECT id, original_url FROM urls WHERE original_url = ANY($1)`,
+		pq.Array(originalURLs),
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make(map[string]string)
+	for rows.Next() {
+		var id, url string
+		if err := rows.Scan(&id, &url); err != nil {
+			return nil, err
+		}
+		result[url] = id
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 func (r *PostgresRepository) Save(ctx context.Context, id, url string) error {
@@ -106,4 +114,8 @@ func (r *PostgresRepository) FindByURL(ctx context.Context, url string) (string,
 		return "", false
 	}
 	return id, true
+}
+
+func (r *PostgresRepository) Ping(ctx context.Context) error {
+	return r.db.PingContext(ctx)
 }

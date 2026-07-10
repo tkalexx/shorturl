@@ -5,9 +5,7 @@ import (
 	"errors"
 )
 
-var (
-	ErrURLExists = errors.New("url already exists")
-)
+var ErrURLExists = errors.New("url already exists")
 
 type URLPair struct {
 	ID  string
@@ -16,7 +14,8 @@ type URLPair struct {
 
 type Repository interface {
 	Save(ctx context.Context, id, url string) error
-	SaveBatch(ctx context.Context, urls []URLPair) error
+	SaveBatch(ctx context.Context, urls []URLPair) (map[string]string, error)
 	Get(ctx context.Context, id string) (url string, found bool)
 	FindByURL(ctx context.Context, url string) (id string, found bool)
+	Ping(ctx context.Context) error
 }
