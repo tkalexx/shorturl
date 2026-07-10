@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"io/fs"
 	"net/http"
 
 	"github.com/pressly/goose/v3"
@@ -76,10 +77,15 @@ func run(cfg *config.Config) error {
 }
 
 func runMigrations(db *sql.DB) error {
+	migrationsFS, err := fs.Sub(shorturl.MigrationsFS, "migrations")
+	if err != nil {
+		return err
+	}
+
 	provider, err := goose.NewProvider(
 		goose.DialectPostgres,
 		db,
-		shorturl.MigrationsFS,
+		migrationsFS,
 	)
 	if err != nil {
 		return err
