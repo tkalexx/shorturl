@@ -2,13 +2,11 @@ package main
 
 import (
 	"database/sql"
-	"embed"
 	"net/http"
 
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
-	"github.com/golang-migrate/migrate/v4/source/iofs"
 	"github.com/tkalexx/shorturl.git/internal/config"
 	"github.com/tkalexx/shorturl.git/internal/db"
 	"github.com/tkalexx/shorturl.git/internal/handler"
@@ -16,8 +14,6 @@ import (
 	"github.com/tkalexx/shorturl.git/internal/repository"
 	"go.uber.org/zap"
 )
-
-var migrationsFS embed.FS
 
 func main() {
 	// обрабатываем аргументы командной строки
@@ -80,17 +76,16 @@ func run(cfg *config.Config) error {
 }
 
 func runMigrations(db *sql.DB) error {
-	d, err := iofs.New(migrationsFS, "migrations")
-	if err != nil {
-		return err
-	}
-
 	driver, err := postgres.WithInstance(db, &postgres.Config{})
 	if err != nil {
 		return err
 	}
 
-	m, err := migrate.NewWithInstance("iofs", d, "postgres", driver)
+	m, err := migrate.NewWithDatabaseInstance(
+		"file://../../migrations",
+		"postgres",
+		driver,
+	)
 	if err != nil {
 		return err
 	}
