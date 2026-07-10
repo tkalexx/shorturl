@@ -1,12 +1,12 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"net/http"
 
-	"github.com/golang-migrate/migrate/v4"
-	"github.com/golang-migrate/migrate/v4/database/postgres"
-	_ "github.com/golang-migrate/migrate/v4/source/file"
+	"github.com/pressly/goose/v3"
+	"github.com/tkalexx/shorturl.git"
 	"github.com/tkalexx/shorturl.git/internal/config"
 	"github.com/tkalexx/shorturl.git/internal/db"
 	"github.com/tkalexx/shorturl.git/internal/handler"
@@ -76,19 +76,15 @@ func run(cfg *config.Config) error {
 }
 
 func runMigrations(db *sql.DB) error {
-	driver, err := postgres.WithInstance(db, &postgres.Config{})
-	if err != nil {
-		return err
-	}
-
-	m, err := migrate.NewWithDatabaseInstance(
-		"file://../../migrations",
-		"postgres",
-		driver,
+	provider, err := goose.NewProvider(
+		goose.DialectPostgres,
+		db,
+		shorturl.MigrationsFS,
 	)
 	if err != nil {
 		return err
 	}
 
-	return m.Up()
+	_, err = provider.Up(context.Background())
+	return err
 }
