@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -90,9 +91,37 @@ func (r *FileRepository) save() error {
 	return encoder.Encode(records)
 }
 
-func (r *FileRepository) Save(id, url string) error {
+func (r *FileRepository) SaveBatch(_ context.Context, urls []URLPair) (map[string]string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+
+	result := make(map[string]string) // originalURL -> shortID
+
+	for _, pair := range urls {
+		r.counter++
+		r.storage[pair.ID] = &fileRecord{
+			UUID:        fmt.Sprintf("%d", r.counter),
+			ShortURL:    pair.ID,
+			OriginalURL: pair.URL,
+		}
+		r.reverse[pair.URL] = pair.ID
+		result[pair.URL] = pair.ID
+	}
+
+	if err := r.save(); err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
+
+func (r *FileRepository) Save(_ context.Context, id, url string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if existingID, ok := r.reverse[url]; ok && existingID != id {
+		return ErrURLExists
+	}
 
 	r.counter++
 	r.storage[id] = &fileRecord{
@@ -105,7 +134,7 @@ func (r *FileRepository) Save(id, url string) error {
 	return r.save()
 }
 
-func (r *FileRepository) Get(id string) (string, bool) {
+func (r *FileRepository) Get(_ context.Context, id string) (string, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	rec, ok := r.storage[id]
@@ -115,9 +144,22 @@ func (r *FileRepository) Get(id string) (string, bool) {
 	return rec.OriginalURL, true
 }
 
-func (r *FileRepository) FindByURL(url string) (string, bool) {
+func (r *FileRepository) FindByURL(_ context.Context, url string) (string, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	id, ok := r.reverse[url]
 	return id, ok
+}
+
+func (r *FileRepository) Ping(_ context.Context) error {
+	if r.path == "" {
+		return fmt.Errorf("file path not set")
+	}
+
+	file, err := os.OpenFile(r.path, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
+	if err != nil {
+		return err
+	}
+	file.Close()
+	return nil
 }

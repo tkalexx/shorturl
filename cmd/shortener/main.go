@@ -1,9 +1,15 @@
 package main
 
 import (
+	"context"
+	"database/sql"
+	"io/fs"
 	"net/http"
 
+	"github.com/pressly/goose/v3"
+	"github.com/tkalexx/shorturl.git"
 	"github.com/tkalexx/shorturl.git/internal/config"
+	"github.com/tkalexx/shorturl.git/internal/db"
 	"github.com/tkalexx/shorturl.git/internal/handler"
 	"github.com/tkalexx/shorturl.git/internal/logger"
 	"github.com/tkalexx/shorturl.git/internal/repository"
@@ -24,18 +30,37 @@ func run(cfg *config.Config) error {
 		return err
 	}
 
-	// Выбираем тип хранилища в зависимости от конфигурации
-	var repo repository.Repository
-	if cfg.FileStoragePath != "" {
-		// Файловое хранилище с сохранением на диск
+	var (
+		repo   repository.Repository
+		dbConn *sql.DB
+		err    error
+	)
+	switch {
+	case cfg.DatabaseDSN != "":
+		dbConn, err = db.NewDB(cfg.DatabaseDSN)
+		if err != nil {
+			logger.Log.Fatal("Failed to connect to database", zap.Error(err))
+		}
+		defer dbConn.Close()
+
+		if err := runMigrations(dbConn); err != nil {
+			logger.Log.Fatal("Failed to run migrations", zap.Error(err))
+		}
+
+		pgRepo, err := repository.NewPostgresRepository(dbConn)
+		if err != nil {
+			logger.Log.Fatal("Failed to initialize postgres repository", zap.Error(err))
+		}
+		repo = pgRepo
+		logger.Log.Info("Using PostgreSQL storage")
+	case cfg.FileStoragePath != "":
 		fileRepo, err := repository.NewFileRepository(cfg.FileStoragePath)
 		if err != nil {
 			logger.Log.Fatal("Failed to initialize file storage", zap.Error(err))
 		}
 		repo = fileRepo
 		logger.Log.Info("Using file storage", zap.String("path", cfg.FileStoragePath))
-	} else {
-		// In-memory хранилище
+	default:
 		repo = repository.NewInMemory()
 		logger.Log.Info("Using in-memory storage")
 	}
@@ -49,4 +74,23 @@ func run(cfg *config.Config) error {
 	)
 
 	return http.ListenAndServe(cfg.RunAddr, handler.NewRouter(service))
+}
+
+func runMigrations(db *sql.DB) error {
+	migrationsFS, err := fs.Sub(shorturl.MigrationsFS, "migrations")
+	if err != nil {
+		return err
+	}
+
+	provider, err := goose.NewProvider(
+		goose.DialectPostgres,
+		db,
+		migrationsFS,
+	)
+	if err != nil {
+		return err
+	}
+
+	_, err = provider.Up(context.Background())
+	return err
 }
