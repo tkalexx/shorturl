@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/tkalexx/shorturl.git/internal/auth"
 	"github.com/tkalexx/shorturl.git/internal/gzip"
 	"github.com/tkalexx/shorturl.git/internal/logger"
 	"github.com/tkalexx/shorturl.git/internal/repository"
@@ -47,6 +48,11 @@ type BatchResponseItem struct {
 	ShortURL      string `json:"short_url"`
 }
 
+type UserURLResponse struct {
+	ShortURL    string `json:"short_url"`
+	OriginalURL string `json:"original_url"`
+}
+
 // Ping проверяет соединение с БД
 func (s *Service) Ping(ctx context.Context) error {
 	if s.repo == nil {
@@ -59,7 +65,7 @@ func (s *Service) SetBaseURL(url string) {
 	s.baseURL = strings.TrimSuffix(url, "/")
 }
 
-func (s *Service) Shorten(ctx context.Context, originalURL string) (string, bool, error) {
+func (s *Service) Shorten(ctx context.Context, originalURL, userID string) (string, bool, error) {
 	originalURL = strings.TrimSpace(originalURL)
 	if originalURL == "" {
 		return "", false, ErrEmptyURL
@@ -72,7 +78,7 @@ func (s *Service) Shorten(ctx context.Context, originalURL string) (string, bool
 
 	id := generateID()
 
-	err = s.repo.Save(ctx, id, originalURL)
+	err = s.repo.Save(ctx, id, originalURL, userID)
 	if err != nil {
 		if errors.Is(err, repository.ErrURLExists) {
 			existingID, found := s.repo.FindByURL(ctx, originalURL)
@@ -87,7 +93,7 @@ func (s *Service) Shorten(ctx context.Context, originalURL string) (string, bool
 	return s.baseURL + "/" + id, false, nil
 }
 
-func (s *Service) ShortenBatch(ctx context.Context, items []BatchItem) ([]BatchResponseItem, error) {
+func (s *Service) ShortenBatch(ctx context.Context, items []BatchItem, userID string) ([]BatchResponseItem, error) {
 	if len(items) == 0 {
 		return []BatchResponseItem{}, nil
 	}
@@ -103,8 +109,9 @@ func (s *Service) ShortenBatch(ctx context.Context, items []BatchItem) ([]BatchR
 		}
 
 		pairs[i] = repository.URLPair{
-			ID:  generateID(),
-			URL: originalURL,
+			ID:     generateID(),
+			URL:    originalURL,
+			UserID: userID,
 		}
 	}
 
@@ -133,6 +140,22 @@ func (s *Service) Get(ctx context.Context, id string) (string, error) {
 	return "", ErrURLNotFound
 }
 
+func (s *Service) GetUserURLs(ctx context.Context, userID string) ([]UserURLResponse, error) {
+	urls, err := s.repo.GetByUserID(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make([]UserURLResponse, 0, len(urls))
+	for _, u := range urls {
+		result = append(result, UserURLResponse{
+			ShortURL:    s.baseURL + "/" + u.ID,
+			OriginalURL: u.OriginalURL,
+		})
+	}
+	return result, nil
+}
+
 type Handler struct {
 	service *Service
 }
@@ -158,6 +181,10 @@ func generateID() string {
 	return base64.URLEncoding.EncodeToString(b)[:8]
 }
 
+func userIDFromRequest(r *http.Request) (string, error) {
+	return auth.UserIDFromContext(r.Context())
+}
+
 // ping handler для GET /ping
 func (h *Handler) ping(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
@@ -178,13 +205,19 @@ func (h *Handler) shortener(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	userID, err := userIDFromRequest(r)
+	if err != nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
 	b, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "Cannot read request body", http.StatusBadRequest)
 		return
 	}
 
-	shortURL, exists, err := h.service.Shorten(r.Context(), string(b))
+	shortURL, exists, err := h.service.Shorten(r.Context(), string(b), userID)
 	if err != nil {
 		mapError(w, err)
 		return
@@ -208,6 +241,12 @@ func (h *Handler) shortenBatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	userID, err := userIDFromRequest(r)
+	if err != nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
 	var req []BatchItem
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
@@ -221,7 +260,7 @@ func (h *Handler) shortenBatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := h.service.ShortenBatch(r.Context(), req)
+	resp, err := h.service.ShortenBatch(r.Context(), req, userID)
 	if err != nil {
 		mapError(w, err)
 		return
@@ -230,6 +269,32 @@ func (h *Handler) shortenBatch(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(resp)
+}
+
+// userURLs возвращает все URL, сокращённые текущим пользователем
+func (h *Handler) userURLs(w http.ResponseWriter, r *http.Request) {
+	userID, err := userIDFromRequest(r)
+	if err != nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	urls, err := h.service.GetUserURLs(r.Context(), userID)
+	if err != nil {
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+
+	if len(urls) == 0 {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(w).Encode(urls); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
 }
 
 // expander возвращает оригинальный URL
@@ -266,12 +331,19 @@ func NewRouter(service *Service) chi.Router {
 	r.Use(gzip.Middleware)
 
 	h := NewHandler(service)
+	authManager := auth.NewManager("")
 
 	r.Get("/ping", h.ping)
-	r.Post("/", h.shortener)
+
+	r.Group(func(r chi.Router) {
+		r.Use(authManager.Middleware)
+		r.Post("/", h.shortener)
+		r.Post("/api/shorten", h.shortenJSON)
+		r.Post("/api/shorten/batch", h.shortenBatch)
+		r.Get("/api/user/urls", h.userURLs)
+	})
+
 	r.Get("/{id}", h.expander)
-	r.Post("/api/shorten", h.shortenJSON)
-	r.Post("/api/shorten/batch", h.shortenBatch)
 
 	return r
 }
@@ -284,13 +356,19 @@ func (h *Handler) shortenJSON(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	userID, err := userIDFromRequest(r)
+	if err != nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
 	var req ShortenRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "Invalid JSON", http.StatusBadRequest)
 		return
 	}
 
-	shortURL, exists, err := h.service.Shorten(r.Context(), req.URL)
+	shortURL, exists, err := h.service.Shorten(r.Context(), req.URL, userID)
 	if err != nil {
 		mapError(w, err)
 		return
