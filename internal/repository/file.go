@@ -15,6 +15,7 @@ type fileRecord struct {
 	UUID        string `json:"uuid"`
 	ShortURL    string `json:"short_url"`
 	OriginalURL string `json:"original_url"`
+	UserID      string `json:"user_id,omitempty"`
 }
 
 // FileRepository хранит данные в памяти и сохраняет в файл
@@ -103,6 +104,7 @@ func (r *FileRepository) SaveBatch(_ context.Context, urls []URLPair) (map[strin
 			UUID:        fmt.Sprintf("%d", r.counter),
 			ShortURL:    pair.ID,
 			OriginalURL: pair.URL,
+			UserID:      pair.UserID,
 		}
 		r.reverse[pair.URL] = pair.ID
 		result[pair.URL] = pair.ID
@@ -115,7 +117,7 @@ func (r *FileRepository) SaveBatch(_ context.Context, urls []URLPair) (map[strin
 	return result, nil
 }
 
-func (r *FileRepository) Save(_ context.Context, id, url string) error {
+func (r *FileRepository) Save(_ context.Context, id, url, userID string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -128,6 +130,7 @@ func (r *FileRepository) Save(_ context.Context, id, url string) error {
 		UUID:        fmt.Sprintf("%d", r.counter),
 		ShortURL:    id,
 		OriginalURL: url,
+		UserID:      userID,
 	}
 	r.reverse[url] = id
 
@@ -149,6 +152,19 @@ func (r *FileRepository) FindByURL(_ context.Context, url string) (string, bool)
 	defer r.mu.RUnlock()
 	id, ok := r.reverse[url]
 	return id, ok
+}
+
+func (r *FileRepository) GetByUserID(_ context.Context, userID string) ([]UserURL, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	result := make([]UserURL, 0)
+	for _, rec := range r.storage {
+		if rec.UserID == userID {
+			result = append(result, UserURL{ID: rec.ShortURL, OriginalURL: rec.OriginalURL})
+		}
+	}
+	return result, nil
 }
 
 func (r *FileRepository) Ping(_ context.Context) error {

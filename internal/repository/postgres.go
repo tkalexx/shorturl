@@ -26,8 +26,8 @@ func (r *PostgresRepository) SaveBatch(ctx context.Context, urls []URLPair) (map
 	defer tx.Rollback()
 
 	stmt, err := tx.PrepareContext(ctx, `
-        INSERT INTO urls (id, original_url) 
-        VALUES ($1, $2)
+        INSERT INTO urls (id, original_url, user_id) 
+        VALUES ($1, $2, $3)
         ON CONFLICT (original_url) DO NOTHING
     `)
 	if err != nil {
@@ -35,7 +35,7 @@ func (r *PostgresRepository) SaveBatch(ctx context.Context, urls []URLPair) (map
 	}
 
 	for _, pair := range urls {
-		if _, err := stmt.ExecContext(ctx, pair.ID, pair.URL); err != nil {
+		if _, err := stmt.ExecContext(ctx, pair.ID, pair.URL, pair.UserID); err != nil {
 			stmt.Close()
 			return nil, err
 		}
@@ -71,13 +71,13 @@ func (r *PostgresRepository) SaveBatch(ctx context.Context, urls []URLPair) (map
 	return result, nil
 }
 
-func (r *PostgresRepository) Save(ctx context.Context, id, url string) error {
+func (r *PostgresRepository) Save(ctx context.Context, id, url, userID string) error {
 	query := `
-		INSERT INTO urls (id, original_url) 
-		VALUES ($1, $2)
+		INSERT INTO urls (id, original_url, user_id) 
+		VALUES ($1, $2, $3)
 		ON CONFLICT (original_url) DO NOTHING
 	`
-	res, err := r.db.ExecContext(ctx, query, id, url)
+	res, err := r.db.ExecContext(ctx, query, id, url, userID)
 	if err != nil {
 		return err
 	}
@@ -114,6 +114,30 @@ func (r *PostgresRepository) FindByURL(ctx context.Context, url string) (string,
 		return "", false
 	}
 	return id, true
+}
+
+func (r *PostgresRepository) GetByUserID(ctx context.Context, userID string) ([]UserURL, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT id, original_url FROM urls WHERE user_id = $1`,
+		userID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make([]UserURL, 0)
+	for rows.Next() {
+		var u UserURL
+		if err := rows.Scan(&u.ID, &u.OriginalURL); err != nil {
+			return nil, err
+		}
+		result = append(result, u)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 func (r *PostgresRepository) Ping(ctx context.Context) error {

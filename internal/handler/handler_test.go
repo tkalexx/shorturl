@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/tkalexx/shorturl.git/internal/auth"
 	"github.com/tkalexx/shorturl.git/internal/repository"
 )
 
@@ -19,6 +20,13 @@ func setupTestService() *Service {
 	service := NewService(repo)
 	service.SetBaseURL("http://localhost:8080")
 	return service
+}
+
+func withTestUser(req *http.Request, userID string) *http.Request {
+	if userID == "" {
+		userID = "test-user"
+	}
+	return req.WithContext(auth.WithUserID(req.Context(), userID))
 }
 
 func TestGenerateID(t *testing.T) {
@@ -80,6 +88,7 @@ func TestShortener(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(tt.body))
 			req.Header.Set("Content-Type", tt.contentType)
+			req = withTestUser(req, "user-1")
 			rr := httptest.NewRecorder()
 
 			h.shortener(rr, req)
@@ -104,6 +113,7 @@ func TestShortenerDuplicate(t *testing.T) {
 
 	req1 := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("https://praktikum.yandex.ru"))
 	req1.Header.Set("Content-Type", "text/plain")
+	req1 = withTestUser(req1, "user-1")
 	rr1 := httptest.NewRecorder()
 	h.shortener(rr1, req1)
 
@@ -114,6 +124,7 @@ func TestShortenerDuplicate(t *testing.T) {
 
 	req2 := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("https://praktikum.yandex.ru"))
 	req2.Header.Set("Content-Type", "text/plain")
+	req2 = withTestUser(req2, "user-1")
 	rr2 := httptest.NewRecorder()
 	h.shortener(rr2, req2)
 
@@ -130,7 +141,7 @@ func TestExpander(t *testing.T) {
 	service := setupTestService()
 	h := NewHandler(service)
 
-	shortURL, _, err := service.Shorten(context.Background(), "https://praktikum.yandex.ru")
+	shortURL, _, err := service.Shorten(context.Background(), "https://praktikum.yandex.ru", "user-1")
 	if err != nil {
 		t.Fatalf("failed to create short URL: %v", err)
 	}
@@ -232,6 +243,7 @@ func TestShortenJSONContentTypeValidation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/api/shorten", strings.NewReader(tt.body))
 			req.Header.Set("Content-Type", tt.contentType)
+			req = withTestUser(req, "user-1")
 			rr := httptest.NewRecorder()
 
 			h.shortenJSON(rr, req)
@@ -278,6 +290,7 @@ func TestShortenJSON(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/api/shorten", strings.NewReader(tt.body))
 			req.Header.Set("Content-Type", "application/json")
+			req = withTestUser(req, "user-1")
 			rr := httptest.NewRecorder()
 
 			h.shortenJSON(rr, req)
@@ -301,6 +314,7 @@ func TestShortenJSONResponseFormat(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/api/shorten", strings.NewReader(`{"url":"https://example.com"}`))
 	req.Header.Set("Content-Type", "application/json")
+	req = withTestUser(req, "user-1")
 	rr := httptest.NewRecorder()
 
 	h.shortenJSON(rr, req)
@@ -507,6 +521,74 @@ func TestRouter_GzipCompression(t *testing.T) {
 			if !strings.HasPrefix(resp.Result, "http://localhost:8080/") {
 				t.Errorf("unexpected result format: %s", resp.Result)
 			}
+		}
+	})
+}
+
+func TestUserURLs(t *testing.T) {
+	service := setupTestService()
+	r := NewRouter(service)
+
+	t.Run("no content for new user", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/user/urls", nil)
+		rr := httptest.NewRecorder()
+
+		r.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusNoContent {
+			t.Fatalf("expected 204, got %d", rr.Code)
+		}
+		if len(rr.Result().Cookies()) == 0 {
+			t.Fatal("expected auth cookie to be set")
+		}
+	})
+
+	t.Run("returns urls for authenticated user", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("https://user-urls.example.com"))
+		req.Header.Set("Content-Type", "text/plain")
+		rr := httptest.NewRecorder()
+		r.ServeHTTP(rr, req)
+
+		if rr.Code != http.StatusCreated {
+			t.Fatalf("shorten failed: %d", rr.Code)
+		}
+		shortURL := rr.Body.String()
+		cookies := rr.Result().Cookies()
+		if len(cookies) == 0 {
+			t.Fatal("expected auth cookie after shorten")
+		}
+
+		listReq := httptest.NewRequest(http.MethodGet, "/api/user/urls", nil)
+		for _, c := range cookies {
+			listReq.AddCookie(c)
+		}
+		listRR := httptest.NewRecorder()
+		r.ServeHTTP(listRR, listReq)
+
+		if listRR.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d body=%s", listRR.Code, listRR.Body.String())
+		}
+
+		var urls []UserURLResponse
+		if err := json.NewDecoder(listRR.Body).Decode(&urls); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if len(urls) != 1 {
+			t.Fatalf("expected 1 url, got %d", len(urls))
+		}
+		if urls[0].ShortURL != shortURL || urls[0].OriginalURL != "https://user-urls.example.com" {
+			t.Errorf("unexpected urls: %+v", urls)
+		}
+	})
+
+	t.Run("unauthorized without user id in cookie", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/api/user/urls", nil)
+		req.AddCookie(&http.Cookie{Name: auth.CookieName, Value: "|abcdef"})
+		rr := httptest.NewRecorder()
+
+		r.ServeHTTP(rr, req)
+		if rr.Code != http.StatusUnauthorized {
+			t.Fatalf("expected 401, got %d", rr.Code)
 		}
 	})
 }
