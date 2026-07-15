@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/tkalexx/shorturl.git/internal/auth"
@@ -591,4 +592,47 @@ func TestUserURLs(t *testing.T) {
 			t.Fatalf("expected 401, got %d", rr.Code)
 		}
 	})
+}
+
+func TestDeleteUserURLs(t *testing.T) {
+	service := setupTestService()
+	r := NewRouter(service)
+
+	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("https://delete-me.example.com"))
+	req.Header.Set("Content-Type", "text/plain")
+	rr := httptest.NewRecorder()
+	r.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("shorten failed: %d", rr.Code)
+	}
+	shortURL := rr.Body.String()
+	parts := strings.Split(shortURL, "/")
+	shortID := parts[len(parts)-1]
+	cookies := rr.Result().Cookies()
+
+	body, _ := json.Marshal([]string{shortID})
+	delReq := httptest.NewRequest(http.MethodDelete, "/api/user/urls", bytes.NewReader(body))
+	delReq.Header.Set("Content-Type", "application/json")
+	for _, c := range cookies {
+		delReq.AddCookie(c)
+	}
+	delRR := httptest.NewRecorder()
+	r.ServeHTTP(delRR, delReq)
+
+	if delRR.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d", delRR.Code)
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		getReq := httptest.NewRequest(http.MethodGet, "/"+shortID, nil)
+		getRR := httptest.NewRecorder()
+		r.ServeHTTP(getRR, getReq)
+		if getRR.Code == http.StatusGone {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatal("expected deleted URL to return 410 Gone")
 }

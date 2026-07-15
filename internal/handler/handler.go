@@ -25,17 +25,24 @@ var (
 	ErrInvalidURL  = errors.New("invalid URL format")
 	ErrEmptyURL    = errors.New("URL cannot be empty")
 	ErrURLNotFound = errors.New("URL not found")
+	ErrURLDeleted  = errors.New("URL deleted")
 )
 
 type Service struct {
-	repo    repository.Repository
-	baseURL string
+	repo     repository.Repository
+	baseURL  string
+	deleteCh chan deleteTask
+	done     chan struct{}
 }
 
 func NewService(repo repository.Repository) *Service {
-	return &Service{
-		repo: repo,
+	s := &Service{
+		repo:     repo,
+		deleteCh: make(chan deleteTask, 1024),
+		done:     make(chan struct{}),
 	}
+	s.startDeleteWorker()
+	return s
 }
 
 type BatchItem struct {
@@ -134,10 +141,14 @@ func (s *Service) Get(ctx context.Context, id string) (string, error) {
 	if id == "" {
 		return "", ErrEmptyURL
 	}
-	if url, ok := s.repo.Get(ctx, id); ok {
-		return url, nil
+	url, deleted, found := s.repo.Get(ctx, id)
+	if !found {
+		return "", ErrURLNotFound
 	}
-	return "", ErrURLNotFound
+	if deleted {
+		return "", ErrURLDeleted
+	}
+	return url, nil
 }
 
 func (s *Service) GetUserURLs(ctx context.Context, userID string) ([]UserURLResponse, error) {
@@ -297,16 +308,43 @@ func (h *Handler) userURLs(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// deleteUserURLs асинхронно удаляет URL пользователя
+func (h *Handler) deleteUserURLs(w http.ResponseWriter, r *http.Request) {
+	userID, err := userIDFromRequest(r)
+	if err != nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	contentType := r.Header.Get("Content-Type")
+	if !strings.HasPrefix(contentType, "application/json") {
+		http.Error(w, "Content-Type must be application/json", http.StatusBadRequest)
+		return
+	}
+
+	var ids []string
+	if err := json.NewDecoder(r.Body).Decode(&ids); err != nil {
+		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+		return
+	}
+
+	h.service.DeleteUserURLs(userID, ids)
+	w.WriteHeader(http.StatusAccepted)
+}
+
 // expander возвращает оригинальный URL
 func (h *Handler) expander(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	originalURL, err := h.service.Get(r.Context(), id)
 	if err != nil {
-		if errors.Is(err, ErrURLNotFound) {
+		switch {
+		case errors.Is(err, ErrURLDeleted):
+			w.WriteHeader(http.StatusGone)
+		case errors.Is(err, ErrURLNotFound):
 			http.Error(w, "URL not found", http.StatusNotFound)
-			return
+		default:
+			http.Error(w, "URL ID is required", http.StatusBadRequest)
 		}
-		http.Error(w, "URL ID is required", http.StatusBadRequest)
 		return
 	}
 
@@ -341,6 +379,7 @@ func NewRouter(service *Service) chi.Router {
 		r.Post("/api/shorten", h.shortenJSON)
 		r.Post("/api/shorten/batch", h.shortenBatch)
 		r.Get("/api/user/urls", h.userURLs)
+		r.Delete("/api/user/urls", h.deleteUserURLs)
 	})
 
 	r.Get("/{id}", h.expander)

@@ -1,0 +1,5 @@
+-- +goose Up
+ALTER TABLE urls ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN NOT NULL DEFAULT FALSE;
+
+-- +goose Down
+ALTER TABLE urls DROP COLUMN IF EXISTS is_deleted;

@@ -16,6 +16,7 @@ type fileRecord struct {
 	ShortURL    string `json:"short_url"`
 	OriginalURL string `json:"original_url"`
 	UserID      string `json:"user_id,omitempty"`
+	Deleted     bool   `json:"is_deleted,omitempty"`
 }
 
 // FileRepository хранит данные в памяти и сохраняет в файл
@@ -137,14 +138,14 @@ func (r *FileRepository) Save(_ context.Context, id, url, userID string) error {
 	return r.save()
 }
 
-func (r *FileRepository) Get(_ context.Context, id string) (string, bool) {
+func (r *FileRepository) Get(_ context.Context, id string) (string, bool, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	rec, ok := r.storage[id]
 	if !ok {
-		return "", false
+		return "", false, false
 	}
-	return rec.OriginalURL, true
+	return rec.OriginalURL, rec.Deleted, true
 }
 
 func (r *FileRepository) FindByURL(_ context.Context, url string) (string, bool) {
@@ -160,11 +161,30 @@ func (r *FileRepository) GetByUserID(_ context.Context, userID string) ([]UserUR
 
 	result := make([]UserURL, 0)
 	for _, rec := range r.storage {
-		if rec.UserID == userID {
+		if rec.UserID == userID && !rec.Deleted {
 			result = append(result, UserURL{ID: rec.ShortURL, OriginalURL: rec.OriginalURL})
 		}
 	}
 	return result, nil
+}
+
+func (r *FileRepository) MarkDeleted(_ context.Context, ids []string, userID string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	changed := false
+	for _, id := range ids {
+		rec, ok := r.storage[id]
+		if !ok || rec.UserID != userID {
+			continue
+		}
+		rec.Deleted = true
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	return r.save()
 }
 
 func (r *FileRepository) Ping(_ context.Context) error {

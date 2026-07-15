@@ -90,17 +90,18 @@ func (r *PostgresRepository) Save(ctx context.Context, id, url, userID string) e
 	return nil
 }
 
-func (r *PostgresRepository) Get(ctx context.Context, id string) (string, bool) {
+func (r *PostgresRepository) Get(ctx context.Context, id string) (string, bool, bool) {
 	var url string
-	query := `SELECT original_url FROM urls WHERE id = $1`
-	err := r.db.QueryRowContext(ctx, query, id).Scan(&url)
+	var deleted bool
+	query := `SELECT original_url, is_deleted FROM urls WHERE id = $1`
+	err := r.db.QueryRowContext(ctx, query, id).Scan(&url, &deleted)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return "", false
+			return "", false, false
 		}
-		return "", false
+		return "", false, false
 	}
-	return url, true
+	return url, deleted, true
 }
 
 func (r *PostgresRepository) FindByURL(ctx context.Context, url string) (string, bool) {
@@ -118,7 +119,7 @@ func (r *PostgresRepository) FindByURL(ctx context.Context, url string) (string,
 
 func (r *PostgresRepository) GetByUserID(ctx context.Context, userID string) ([]UserURL, error) {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT id, original_url FROM urls WHERE user_id = $1`,
+		`SELECT id, original_url FROM urls WHERE user_id = $1 AND is_deleted = FALSE`,
 		userID,
 	)
 	if err != nil {
@@ -138,6 +139,18 @@ func (r *PostgresRepository) GetByUserID(ctx context.Context, userID string) ([]
 		return nil, err
 	}
 	return result, nil
+}
+
+func (r *PostgresRepository) MarkDeleted(ctx context.Context, ids []string, userID string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE urls
+		SET is_deleted = TRUE
+		WHERE id = ANY($1) AND user_id = $2 AND is_deleted = FALSE
+	`, pq.Array(ids), userID)
+	return err
 }
 
 func (r *PostgresRepository) Ping(ctx context.Context) error {
