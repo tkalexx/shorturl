@@ -2,7 +2,6 @@ package handler
 
 import (
 	"context"
-	"sync"
 	"time"
 
 	"github.com/tkalexx/shorturl.git/internal/logger"
@@ -10,7 +9,6 @@ import (
 )
 
 const (
-	deleteWorkers    = 4
 	deleteBatchSize  = 10
 	deleteFlushEvery = 200 * time.Millisecond
 )
@@ -18,31 +16,6 @@ const (
 type deleteTask struct {
 	shortID string
 	userID  string
-}
-
-// fanIn объединяет несколько каналов в один
-func fanIn(channels ...<-chan deleteTask) <-chan deleteTask {
-	var wg sync.WaitGroup
-	out := make(chan deleteTask)
-
-	multiplex := func(c <-chan deleteTask) {
-		defer wg.Done()
-		for task := range c {
-			out <- task
-		}
-	}
-
-	wg.Add(len(channels))
-	for _, c := range channels {
-		go multiplex(c)
-	}
-
-	go func() {
-		wg.Wait()
-		close(out)
-	}()
-
-	return out
 }
 
 func (s *Service) startDeleteWorker() {
@@ -65,50 +38,15 @@ func (s *Service) DeleteUserURLs(userID string, ids []string) {
 		return
 	}
 
-	go s.enqueueDeletes(userID, filtered)
-}
-
-func (s *Service) enqueueDeletes(userID string, ids []string) {
-	workers := deleteWorkers
-	if workers > len(ids) {
-		workers = len(ids)
-	}
-
-	channels := make([]<-chan deleteTask, 0, workers)
-	chunkSize := (len(ids) + workers - 1) / workers
-
-	for i := 0; i < workers; i++ {
-		start := i * chunkSize
-		if start >= len(ids) {
-			break
-		}
-		end := start + chunkSize
-		if end > len(ids) {
-			end = len(ids)
-		}
-		chunk := ids[start:end]
-
-		ch := make(chan deleteTask)
-		go func(ids []string) {
-			defer close(ch)
-			for _, id := range ids {
-				select {
-				case ch <- deleteTask{shortID: id, userID: userID}:
-				case <-s.done:
-					return
-				}
+	go func() {
+		for _, id := range filtered {
+			select {
+			case s.deleteCh <- deleteTask{shortID: id, userID: userID}:
+			case <-s.done:
+				return
 			}
-		}(chunk)
-		channels = append(channels, ch)
-	}
-
-	for task := range fanIn(channels...) {
-		select {
-		case s.deleteCh <- task:
-		case <-s.done:
-			return
 		}
-	}
+	}()
 }
 
 func (s *Service) deleteWorker() {

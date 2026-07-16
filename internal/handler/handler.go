@@ -83,7 +83,10 @@ func (s *Service) Shorten(ctx context.Context, originalURL, userID string) (stri
 		return "", false, ErrInvalidURL
 	}
 
-	id := generateID()
+	id, err := generateID()
+	if err != nil {
+		return "", false, err
+	}
 
 	err = s.repo.Save(ctx, id, originalURL, userID)
 	if err != nil {
@@ -115,8 +118,13 @@ func (s *Service) ShortenBatch(ctx context.Context, items []BatchItem, userID st
 			return nil, ErrInvalidURL
 		}
 
+		id, err := generateID()
+		if err != nil {
+			return nil, err
+		}
+
 		pairs[i] = repository.URLPair{
-			ID:     generateID(),
+			ID:     id,
 			URL:    originalURL,
 			UserID: userID,
 		}
@@ -184,12 +192,12 @@ type ShortenResponse struct {
 }
 
 // generateID генерирует уникальный ID
-func generateID() string {
+func generateID() (string, error) {
 	b := make([]byte, 6)
 	if _, err := rand.Read(b); err != nil {
-		panic("failed to generate random ID")
+		return "", fmt.Errorf("failed to generate random ID: %w", err)
 	}
-	return base64.URLEncoding.EncodeToString(b)[:8]
+	return base64.URLEncoding.EncodeToString(b)[:8], nil
 }
 
 func userIDFromRequest(r *http.Request) (string, error) {
@@ -363,13 +371,12 @@ func mapError(w http.ResponseWriter, err error) {
 	}
 }
 
-func NewRouter(service *Service) chi.Router {
+func NewRouter(service *Service, authManager *auth.Manager) chi.Router {
 	r := chi.NewRouter()
 	r.Use(logger.LoggingMiddleware)
 	r.Use(gzip.Middleware)
 
 	h := NewHandler(service)
-	authManager := auth.NewManager("")
 
 	r.Get("/ping", h.ping)
 

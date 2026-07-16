@@ -7,28 +7,36 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 )
 
 const CookieName = "auth"
 
+var (
+	ErrNoUserID       = errors.New("user id not found")
+	ErrEmptySecret    = errors.New("auth secret is required")
+	ErrSecretTooShort = errors.New("auth secret must be at least 16 characters")
+)
+
 type contextKey struct{}
 
 var userIDKey = contextKey{}
-
-var ErrNoUserID = errors.New("user id not found")
 
 // Manager подписывает и проверяет ауз куки
 type Manager struct {
 	secret []byte
 }
 
-func NewManager(secret string) *Manager {
+func NewManager(secret string) (*Manager, error) {
 	if secret == "" {
-		secret = "default-auth-secret"
+		return nil, ErrEmptySecret
 	}
-	return &Manager{secret: []byte(secret)}
+	if len(secret) < 16 {
+		return nil, ErrSecretTooShort
+	}
+	return &Manager{secret: []byte(secret)}, nil
 }
 
 // sign возвращает значение куки вида "<userID>|<hex>"
@@ -60,12 +68,12 @@ func (m *Manager) verify(value string) (string, error) {
 	return userID, nil
 }
 
-func generateUserID() string {
+func generateUserID() (string, error) {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {
-		panic("failed to generate user id")
+		return "", fmt.Errorf("failed to generate user id: %w", err)
 	}
-	return hex.EncodeToString(b)
+	return hex.EncodeToString(b), nil
 }
 
 func (m *Manager) setCookie(w http.ResponseWriter, userID string) {
@@ -97,13 +105,21 @@ func (m *Manager) Middleware(next http.Handler) http.Handler {
 			}
 			id, verifyErr := m.verify(cookie.Value)
 			if verifyErr != nil {
-				userID = generateUserID()
+				userID, err = generateUserID()
+				if err != nil {
+					http.Error(w, "Internal error", http.StatusInternalServerError)
+					return
+				}
 				m.setCookie(w, userID)
 			} else {
 				userID = id
 			}
 		default:
-			userID = generateUserID()
+			userID, err = generateUserID()
+			if err != nil {
+				http.Error(w, "Internal error", http.StatusInternalServerError)
+				return
+			}
 			m.setCookie(w, userID)
 		}
 

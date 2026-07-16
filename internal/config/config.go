@@ -1,9 +1,12 @@
 package config
 
 import (
+	"errors"
 	"flag"
 	"os"
 	"strings"
+
+	"github.com/tkalexx/shorturl.git/internal/auth"
 )
 
 // Config хранит настройки сервиса
@@ -12,6 +15,7 @@ type Config struct {
 	BaseURL         string // базовый адрес сокращенных ссылок
 	FileStoragePath string // путь к файлу хранения URL
 	DatabaseDSN     string
+	AuthSecret      string
 }
 
 // NewConfig инициализирует и парсит флаги командной строки
@@ -24,6 +28,7 @@ func NewConfig() *Config {
 	flag.StringVar(&cfg.FileStoragePath, "file-storage-path", "/tmp/short-url-db.json", "path to file storage for URLs")
 	flag.StringVar(&cfg.DatabaseDSN, "database-dsn", "", "database connection string")
 	flag.StringVar(&cfg.DatabaseDSN, "d", "", "database connection string")
+	flag.StringVar(&cfg.AuthSecret, "auth-secret", "", "secret key for signing auth cookies")
 	flag.Parse()
 
 	if envAddr := os.Getenv("SERVER_ADDRESS"); envAddr != "" {
@@ -42,6 +47,10 @@ func NewConfig() *Config {
 		cfg.DatabaseDSN = envDSN
 	}
 
+	if envSecret := os.Getenv("AUTH_SECRET"); envSecret != "" {
+		cfg.AuthSecret = envSecret
+	}
+
 	if cfg.FileStoragePath == "" {
 		cfg.FileStoragePath = "/tmp/short-url-db.json"
 	}
@@ -57,4 +66,12 @@ func NewConfig() *Config {
 	cfg.BaseURL = strings.TrimSuffix(cfg.BaseURL, "/")
 
 	return cfg
+}
+
+// Validate проверяет обязательные настройки сервиса
+func (c *Config) Validate() error {
+	if _, err := auth.NewManager(c.AuthSecret); err != nil {
+		return errors.New("invalid auth secret: " + err.Error())
+	}
+	return nil
 }
