@@ -23,6 +23,7 @@ jobs:
 
     env:
       DATABASE_CONN_STRING: "postgres://postgres:postgres@postgres:5432/praktikum?sslmode=disable"
+      AUTH_SECRET: "practicum-test-auth-secret"
 
     services:
       postgres:

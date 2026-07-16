@@ -8,6 +8,7 @@ import (
 
 	"github.com/pressly/goose/v3"
 	"github.com/tkalexx/shorturl.git"
+	"github.com/tkalexx/shorturl.git/internal/auth"
 	"github.com/tkalexx/shorturl.git/internal/config"
 	"github.com/tkalexx/shorturl.git/internal/db"
 	"github.com/tkalexx/shorturl.git/internal/handler"
@@ -30,13 +31,22 @@ func run(cfg *config.Config) error {
 		return err
 	}
 
+	if err := cfg.Validate(); err != nil {
+		return err
+	}
+
+	authManager, err := auth.NewManager(cfg.AuthSecret)
+	if err != nil {
+		return err
+	}
+
 	var (
 		repo   repository.Repository
 		dbConn *sql.DB
-		err    error
 	)
 	switch {
 	case cfg.DatabaseDSN != "":
+		var err error
 		dbConn, err = db.NewDB(cfg.DatabaseDSN)
 		if err != nil {
 			logger.Log.Fatal("Failed to connect to database", zap.Error(err))
@@ -73,7 +83,7 @@ func run(cfg *config.Config) error {
 		zap.String("base_url", cfg.BaseURL),
 	)
 
-	return http.ListenAndServe(cfg.RunAddr, handler.NewRouter(service))
+	return http.ListenAndServe(cfg.RunAddr, handler.NewRouter(service, authManager))
 }
 
 func runMigrations(db *sql.DB) error {
