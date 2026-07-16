@@ -200,10 +200,6 @@ func generateID() (string, error) {
 	return base64.URLEncoding.EncodeToString(b)[:8], nil
 }
 
-func userIDFromRequest(r *http.Request) (string, error) {
-	return auth.UserIDFromContext(r.Context())
-}
-
 // ping handler для GET /ping
 func (h *Handler) ping(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
@@ -224,7 +220,7 @@ func (h *Handler) shortener(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID, err := userIDFromRequest(r)
+	userID, err := auth.UserIDFromContext(r.Context())
 	if err != nil {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -260,7 +256,7 @@ func (h *Handler) shortenBatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID, err := userIDFromRequest(r)
+	userID, err := auth.UserIDFromContext(r.Context())
 	if err != nil {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -292,7 +288,7 @@ func (h *Handler) shortenBatch(w http.ResponseWriter, r *http.Request) {
 
 // userURLs возвращает все URL, сокращённые текущим пользователем
 func (h *Handler) userURLs(w http.ResponseWriter, r *http.Request) {
-	userID, err := userIDFromRequest(r)
+	userID, err := auth.UserIDFromContext(r.Context())
 	if err != nil {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -318,7 +314,7 @@ func (h *Handler) userURLs(w http.ResponseWriter, r *http.Request) {
 
 // deleteUserURLs асинхронно удаляет URL пользователя
 func (h *Handler) deleteUserURLs(w http.ResponseWriter, r *http.Request) {
-	userID, err := userIDFromRequest(r)
+	userID, err := auth.UserIDFromContext(r.Context())
 	if err != nil {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
@@ -402,7 +398,7 @@ func (h *Handler) shortenJSON(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID, err := userIDFromRequest(r)
+	userID, err := auth.UserIDFromContext(r.Context())
 	if err != nil {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
