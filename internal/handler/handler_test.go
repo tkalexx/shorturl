@@ -636,3 +636,58 @@ func TestDeleteUserURLs(t *testing.T) {
 	}
 	t.Fatal("expected deleted URL to return 410 Gone")
 }
+
+func TestShortenBatchAndPing(t *testing.T) {
+	service := setupTestService()
+	r := NewRouter(service)
+
+	t.Run("ping", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/ping", nil)
+		rr := httptest.NewRecorder()
+		r.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("ping status=%d", rr.Code)
+		}
+	})
+
+	t.Run("batch", func(t *testing.T) {
+		body := `[{"correlation_id":"1","original_url":"https://batch1.example.com"},{"correlation_id":"2","original_url":"https://batch2.example.com"}]`
+		req := httptest.NewRequest(http.MethodPost, "/api/shorten/batch", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+		r.ServeHTTP(rr, req)
+		if rr.Code != http.StatusCreated {
+			t.Fatalf("batch status=%d body=%s", rr.Code, rr.Body.String())
+		}
+		var resp []BatchResponseItem
+		if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		if len(resp) != 2 {
+			t.Fatalf("expected 2 items, got %d", len(resp))
+		}
+	})
+
+	t.Run("batch empty", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/shorten/batch", strings.NewReader("[]"))
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+		r.ServeHTTP(rr, req)
+		if rr.Code != http.StatusCreated {
+			t.Fatalf("empty batch status=%d", rr.Code)
+		}
+	})
+}
+
+func TestServiceShortenBatch(t *testing.T) {
+	service := setupTestService()
+	resp, err := service.ShortenBatch(context.Background(), []BatchItem{
+		{CorrelationID: "c1", OriginalURL: "https://svc-batch.example.com"},
+	}, "user-1")
+	if err != nil {
+		t.Fatalf("ShortenBatch: %v", err)
+	}
+	if len(resp) != 1 || !strings.HasPrefix(resp[0].ShortURL, "http://localhost:8080/") {
+		t.Fatalf("unexpected resp: %+v", resp)
+	}
+}

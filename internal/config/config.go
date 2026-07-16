@@ -16,15 +16,21 @@ type Config struct {
 
 // NewConfig инициализирует и парсит флаги командной строки
 func NewConfig() *Config {
+	return Parse(os.Args[1:])
+}
+
+// Parse разбирает аргументы и переменные окружения в Config.
+func Parse(args []string) *Config {
 	cfg := &Config{}
 
-	// Регистрируем флаги
-	flag.StringVar(&cfg.RunAddr, "a", ":8080", "address and port to run server (e.g., localhost:8888)")
-	flag.StringVar(&cfg.BaseURL, "b", "", "base URL for shortened links (e.g., http://localhost:8000/q)")
-	flag.StringVar(&cfg.FileStoragePath, "file-storage-path", "/tmp/short-url-db.json", "path to file storage for URLs")
-	flag.StringVar(&cfg.DatabaseDSN, "database-dsn", "", "database connection string")
-	flag.StringVar(&cfg.DatabaseDSN, "d", "", "database connection string")
-	flag.Parse()
+	fs := flag.NewFlagSet("shortener", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	fs.StringVar(&cfg.RunAddr, "a", ":8080", "address and port to run server (e.g., localhost:8888)")
+	fs.StringVar(&cfg.BaseURL, "b", "", "base URL for shortened links (e.g., http://localhost:8000/q)")
+	fs.StringVar(&cfg.FileStoragePath, "file-storage-path", "/tmp/short-url-db.json", "path to file storage for URLs")
+	fs.StringVar(&cfg.DatabaseDSN, "database-dsn", "", "database connection string")
+	fs.StringVar(&cfg.DatabaseDSN, "d", "", "database connection string")
+	_ = fs.Parse(args)
 
 	if envAddr := os.Getenv("SERVER_ADDRESS"); envAddr != "" {
 		cfg.RunAddr = envAddr
