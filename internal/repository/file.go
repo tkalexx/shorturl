@@ -88,9 +88,7 @@ func (r *FileRepository) save() error {
 		records = append(records, *rec)
 	}
 
-	encoder := json.NewEncoder(file)
-	encoder.SetIndent("", "  ")
-	return encoder.Encode(records)
+	return json.NewEncoder(file).Encode(records)
 }
 
 func (r *FileRepository) SaveBatch(_ context.Context, urls []URLPair) (map[string]string, error) {

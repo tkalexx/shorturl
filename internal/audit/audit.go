@@ -41,7 +41,7 @@ func NewAuditor() *Auditor {
 	return &Auditor{}
 }
 
-// Subscribe добавляет приёмник аудита
+// Subscribe добавляет приёмник аудита.
 func (a *Auditor) Subscribe(o Observer) {
 	if o == nil {
 		return
@@ -51,21 +51,19 @@ func (a *Auditor) Subscribe(o Observer) {
 	a.observers = append(a.observers, o)
 }
 
-// Notify уведомляет всех подписчиков о событии
+// Notify уведомляет всех подписчиков о событии.
 func (a *Auditor) Notify(event Event) {
 	a.mu.RLock()
-	observers := make([]Observer, len(a.observers))
-	copy(observers, a.observers)
-	a.mu.RUnlock()
+	defer a.mu.RUnlock()
 
-	for _, o := range observers {
+	for _, o := range a.observers {
 		if err := o.Notify(event); err != nil {
 			logger.Log.Error("audit notify failed", zap.Error(err))
 		}
 	}
 }
 
-// LogShorten формирует и рассылает событие создания ссылки
+// LogShorten формирует и рассылает событие создания ссылки.
 func (a *Auditor) LogShorten(userID, originalURL string) {
 	a.Notify(Event{
 		TS:     time.Now().Unix(),
@@ -75,7 +73,7 @@ func (a *Auditor) LogShorten(userID, originalURL string) {
 	})
 }
 
-// LogFollow формирует и рассылает событие перехода по ссылке
+// LogFollow формирует и рассылает событие перехода по ссылке.
 func (a *Auditor) LogFollow(userID, originalURL string) {
 	a.Notify(Event{
 		TS:     time.Now().Unix(),
@@ -85,47 +83,62 @@ func (a *Auditor) LogFollow(userID, originalURL string) {
 	})
 }
 
-// FileObserver пишет события аудита в файл
+// FileObserver пишет события аудита в файл (по одной JSON-строке).
 type FileObserver struct {
 	path string
 	mu   sync.Mutex
+	file *os.File
+	buf  []byte
 }
 
-// NewFileObserver создаёт приёмник, пишущий в path
+// NewFileObserver создаёт приёмник, пишущий в path.
 func NewFileObserver(path string) *FileObserver {
-	return &FileObserver{path: path}
+	return &FileObserver{path: path, buf: make([]byte, 0, 256)}
 }
 
-// Notify добавляет событие в конец файла на новой строке
+func (f *FileObserver) openLocked() error {
+	if f.file != nil {
+		return nil
+	}
+	file, err := os.OpenFile(f.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("open audit file: %w", err)
+	}
+	f.file = file
+	return nil
+}
+
+// Notify добавляет событие в конец файла на новой строке.
 func (f *FileObserver) Notify(event Event) error {
 	data, err := json.Marshal(event)
 	if err != nil {
 		return fmt.Errorf("marshal audit event: %w", err)
 	}
-	data = append(data, '\n')
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	file, err := os.OpenFile(f.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	if err != nil {
-		return fmt.Errorf("open audit file: %w", err)
+	if err := f.openLocked(); err != nil {
+		return err
 	}
-	defer file.Close()
 
-	if _, err := file.Write(data); err != nil {
+	f.buf = f.buf[:0]
+	f.buf = append(f.buf, data...)
+	f.buf = append(f.buf, '\n')
+
+	if _, err := f.file.Write(f.buf); err != nil {
 		return fmt.Errorf("write audit file: %w", err)
 	}
 	return nil
 }
 
-// HTTPObserver отправляет события аудита POST-запросом на удалённый URL
+// HTTPObserver отправляет события аудита POST-запросом на удалённый URL.
 type HTTPObserver struct {
 	url    string
 	client *http.Client
 }
 
-// NewHTTPObserver создаёт приёмник для удалённого сервера
+// NewHTTPObserver создаёт приёмник для удалённого сервера.
 func NewHTTPObserver(url string) *HTTPObserver {
 	return &HTTPObserver{
 		url: url,
@@ -135,7 +148,7 @@ func NewHTTPObserver(url string) *HTTPObserver {
 	}
 }
 
-// Notify отправляет событие методом POST
+// Notify отправляет событие методом POST.
 func (h *HTTPObserver) Notify(event Event) error {
 	data, err := json.Marshal(event)
 	if err != nil {
@@ -160,7 +173,8 @@ func (h *HTTPObserver) Notify(event Event) error {
 	return nil
 }
 
-// BuildFromConfig создаёт Auditor и подключает приёмники по путям конфигурации
+// BuildFromConfig создаёт Auditor и подключает приёмники по путям конфигурации.
+// Пустые auditFile / auditURL означают, что соответствующий приёмник отключён.
 func BuildFromConfig(auditFile, auditURL string) *Auditor {
 	auditor := NewAuditor()
 	if auditFile != "" {
