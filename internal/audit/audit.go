@@ -13,8 +13,10 @@ import (
 	"go.uber.org/zap"
 )
 
+// ActionShorten - действие аудита при создании короткой ссылки.
 const ActionShorten = "shorten"
 
+// ActionFollow - действие аудита при переходе по короткой ссылке.
 const ActionFollow = "follow"
 
 // Event - событие аудита
@@ -25,18 +27,18 @@ type Event struct {
 	URL    string `json:"url"`
 }
 
-// Observer принимает уведомления о событиях аудита
+// Observer принимает уведомления о событиях аудита.
 type Observer interface {
 	Notify(event Event) error
 }
 
-// Auditor - субъект, рассылающий события всем подписчикам
+// Auditor - субъект, рассылающий события всем подписчикам.
 type Auditor struct {
 	mu        sync.RWMutex
 	observers []Observer
 }
 
-// NewAuditor создаёт пустой Auditor без подписчиков
+// NewAuditor создаёт пустой Auditor без подписчиков.
 func NewAuditor() *Auditor {
 	return &Auditor{}
 }

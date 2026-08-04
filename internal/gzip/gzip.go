@@ -33,10 +33,12 @@ func newCompressWriter(w http.ResponseWriter) *compressWriter {
 	return &compressWriter{w: w}
 }
 
+// Header возвращает заголовки исходного ResponseWriter.
 func (c *compressWriter) Header() http.Header {
 	return c.w.Header()
 }
 
+// Write пишет тело ответа, при необходимости через gzip.
 func (c *compressWriter) Write(p []byte) (int, error) {
 	if !c.wroteHeader {
 		c.WriteHeader(http.StatusOK)
@@ -47,6 +49,7 @@ func (c *compressWriter) Write(p []byte) (int, error) {
 	return c.w.Write(p)
 }
 
+// WriteHeader отправляет статус и включает gzip для подходящих Content-Type.
 func (c *compressWriter) WriteHeader(statusCode int) {
 	if c.wroteHeader {
 		return
@@ -94,10 +97,12 @@ func newCompressReader(r io.ReadCloser) (*compressReader, error) {
 	return &compressReader{r: r, zr: zr}, nil
 }
 
+// Read читает распакованные данные из gzip-потока.
 func (c *compressReader) Read(p []byte) (n int, err error) {
 	return c.zr.Read(p)
 }
 
+// Close закрывает gzip.Reader и исходное тело запроса.
 func (c *compressReader) Close() error {
 	err := c.zr.Close()
 	gzipReaderPool.Put(c.zr)

@@ -9,13 +9,13 @@ import (
 	"github.com/tkalexx/shorturl.git/internal/auth"
 )
 
-// Config хранит настройки сервиса
+// Config хранит настройки сервиса.
 type Config struct {
 	RunAddr         string // адрес и порт
 	BaseURL         string // базовый адрес сокращенных ссылок
 	FileStoragePath string // путь к файлу хранения URL
-	DatabaseDSN     string
-	AuthSecret      string
+	DatabaseDSN     string // строка подключения к PostgreSQL
+	AuthSecret      string // секрет подписи auth-cookie
 	AuditFile       string // путь к файлу аудита; пусто - аудит в файл отключён
 	AuditURL        string // URL удалённого приёмника аудита; пусто - отключён
 }
@@ -80,7 +80,7 @@ func NewConfig() *Config {
 	return cfg
 }
 
-// Validate проверяет обязательные настройки сервиса
+// Validate проверяет обязательные настройки сервиса.
 func (c *Config) Validate() error {
 	if _, err := auth.NewManager(c.AuthSecret); err != nil {
 		return errors.New("invalid auth secret: " + err.Error())

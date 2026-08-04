@@ -5,8 +5,10 @@ import (
 	"errors"
 )
 
+// ErrURLExists возвращается, если оригинальный URL уже сохранён.
 var ErrURLExists = errors.New("url already exists")
 
+// URLPair связывает короткий идентификатор, оригинальный URL и владельца.
 type URLPair struct {
 	ID     string
 	URL    string
@@ -19,6 +21,7 @@ type UserURL struct {
 	OriginalURL string
 }
 
+// Repository описывает хранилище коротких ссылок.
 type Repository interface {
 	Save(ctx context.Context, id, url, userID string) error
 	SaveBatch(ctx context.Context, urls []URLPair) (map[string]string, error)

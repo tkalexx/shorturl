@@ -23,6 +23,7 @@ import (
 	"go.uber.org/zap"
 )
 
+// Ошибки бизнес-логики сокращения и получения URL.
 var (
 	ErrInvalidURL  = errors.New("invalid URL format")
 	ErrEmptyURL    = errors.New("URL cannot be empty")
@@ -30,6 +31,7 @@ var (
 	ErrURLDeleted  = errors.New("URL deleted")
 )
 
+// Service реализует бизнес-логику сокращения URL и асинхронного удаления.
 type Service struct {
 	repo     repository.Repository
 	baseURL  string
@@ -37,6 +39,7 @@ type Service struct {
 	done     chan struct{}
 }
 
+// NewService создаёт сервис поверх репозитория и запускает воркер удаления.
 func NewService(repo repository.Repository) *Service {
 	s := &Service{
 		repo:     repo,
@@ -47,22 +50,25 @@ func NewService(repo repository.Repository) *Service {
 	return s
 }
 
+// BatchItem — элемент запроса пакетного сокращения URL.
 type BatchItem struct {
 	CorrelationID string `json:"correlation_id"`
 	OriginalURL   string `json:"original_url"`
 }
 
+// BatchResponseItem — элемент ответа пакетного сокращения URL.
 type BatchResponseItem struct {
 	CorrelationID string `json:"correlation_id"`
 	ShortURL      string `json:"short_url"`
 }
 
+// UserURLResponse — пара короткой и оригинальной ссылки пользователя.
 type UserURLResponse struct {
 	ShortURL    string `json:"short_url"`
 	OriginalURL string `json:"original_url"`
 }
 
-// Ping проверяет соединение с БД
+// Ping проверяет доступность хранилища.
 func (s *Service) Ping(ctx context.Context) error {
 	if s.repo == nil {
 		return fmt.Errorf("repository not initialized")
@@ -70,10 +76,13 @@ func (s *Service) Ping(ctx context.Context) error {
 	return s.repo.Ping(ctx)
 }
 
+// SetBaseURL задаёт базовый адрес для формирования коротких ссылок.
 func (s *Service) SetBaseURL(url string) {
 	s.baseURL = strings.TrimSuffix(url, "/")
 }
 
+// Shorten сохраняет URL и возвращает короткую ссылку.
+// Второй результат — true, если URL уже существовал (конфликт).
 func (s *Service) Shorten(ctx context.Context, originalURL, userID string) (string, bool, error) {
 	originalURL = strings.TrimSpace(originalURL)
 	if originalURL == "" {
@@ -105,6 +114,7 @@ func (s *Service) Shorten(ctx context.Context, originalURL, userID string) (stri
 	return s.baseURL + "/" + id, false, nil
 }
 
+// ShortenBatch пакетно сокращает список URL и сохраняет их за пользователем.
 func (s *Service) ShortenBatch(ctx context.Context, items []BatchItem, userID string) ([]BatchResponseItem, error) {
 	if len(items) == 0 {
 		return []BatchResponseItem{}, nil
@@ -147,6 +157,7 @@ func (s *Service) ShortenBatch(ctx context.Context, items []BatchItem, userID st
 	return result, nil
 }
 
+// Get возвращает оригинальный URL по короткому идентификатору.
 func (s *Service) Get(ctx context.Context, id string) (string, error) {
 	if id == "" {
 		return "", ErrEmptyURL
@@ -161,6 +172,7 @@ func (s *Service) Get(ctx context.Context, id string) (string, error) {
 	return url, nil
 }
 
+// GetUserURLs возвращает все неудалённые URL, сокращённые пользователем.
 func (s *Service) GetUserURLs(ctx context.Context, userID string) ([]UserURLResponse, error) {
 	urls, err := s.repo.GetByUserID(ctx, userID)
 	if err != nil {
@@ -177,11 +189,13 @@ func (s *Service) GetUserURLs(ctx context.Context, userID string) ([]UserURLResp
 	return result, nil
 }
 
+// Handler обрабатывает HTTP-запросы сервиса сокращения URL.
 type Handler struct {
 	service *Service
 	auditor *audit.Auditor
 }
 
+// NewHandler создаёт HTTP-обработчик поверх сервиса и аудитора.
 func NewHandler(service *Service, auditor *audit.Auditor) *Handler {
 	if auditor == nil {
 		auditor = audit.NewAuditor()
@@ -189,10 +203,12 @@ func NewHandler(service *Service, auditor *audit.Auditor) *Handler {
 	return &Handler{service: service, auditor: auditor}
 }
 
+// ShortenRequest — тело JSON-запроса POST /api/shorten.
 type ShortenRequest struct {
 	URL string `json:"url"`
 }
 
+// ShortenResponse — тело JSON-ответа POST /api/shorten.
 type ShortenResponse struct {
 	Result string `json:"result"`
 }
@@ -378,6 +394,8 @@ func mapError(w http.ResponseWriter, err error) {
 	}
 }
 
+// NewRouter собирает chi-роутер со всеми эндпоинтами сервиса,
+// middleware логирования, gzip и аутентификации, а также pprof.
 func NewRouter(service *Service, authManager *auth.Manager, auditor *audit.Auditor) chi.Router {
 	r := chi.NewRouter()
 	r.Use(logger.LoggingMiddleware)

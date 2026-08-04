@@ -12,8 +12,10 @@ import (
 	"strings"
 )
 
+// CookieName - имя cookie с подписанным идентификатором пользователя.
 const CookieName = "auth"
 
+// Ошибки пакета auth.
 var (
 	ErrNoUserID       = errors.New("user id not found")
 	ErrEmptySecret    = errors.New("auth secret is required")

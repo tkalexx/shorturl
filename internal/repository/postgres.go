@@ -9,15 +9,18 @@ import (
 	"github.com/lib/pq"
 )
 
+// PostgresRepository хранит короткие ссылки в PostgreSQL.
 type PostgresRepository struct {
 	db *sql.DB
 }
 
+// NewPostgresRepository создаёт репозиторий поверх открытого соединения с БД.
 func NewPostgresRepository(db *sql.DB) (Repository, error) {
 	repo := &PostgresRepository{db: db}
 	return repo, nil
 }
 
+// SaveBatch пакетно сохраняет URL в одной транзакции.
 func (r *PostgresRepository) SaveBatch(ctx context.Context, urls []URLPair) (map[string]string, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -71,6 +74,7 @@ func (r *PostgresRepository) SaveBatch(ctx context.Context, urls []URLPair) (map
 	return result, nil
 }
 
+// Save сохраняет URL; при конфликте оригинального адреса возвращает ErrURLExists.
 func (r *PostgresRepository) Save(ctx context.Context, id, url, userID string) error {
 	query := `
 		INSERT INTO urls (id, original_url, user_id) 
@@ -90,6 +94,7 @@ func (r *PostgresRepository) Save(ctx context.Context, id, url, userID string) e
 	return nil
 }
 
+// Get возвращает оригинальный URL, флаг удаления и признак наличия записи.
 func (r *PostgresRepository) Get(ctx context.Context, id string) (string, bool, bool) {
 	var url string
 	var deleted bool
@@ -104,6 +109,7 @@ func (r *PostgresRepository) Get(ctx context.Context, id string) (string, bool, 
 	return url, deleted, true
 }
 
+// FindByURL ищет короткий идентификатор по оригинальному URL.
 func (r *PostgresRepository) FindByURL(ctx context.Context, url string) (string, bool) {
 	var id string
 	query := `SELECT id FROM urls WHERE original_url = $1`
@@ -117,6 +123,7 @@ func (r *PostgresRepository) FindByURL(ctx context.Context, url string) (string,
 	return id, true
 }
 
+// GetByUserID возвращает все неудалённые URL пользователя.
 func (r *PostgresRepository) GetByUserID(ctx context.Context, userID string) ([]UserURL, error) {
 	rows, err := r.db.QueryContext(ctx,
 		`SELECT id, original_url FROM urls WHERE user_id = $1 AND is_deleted = FALSE`,
@@ -141,6 +148,7 @@ func (r *PostgresRepository) GetByUserID(ctx context.Context, userID string) ([]
 	return result, nil
 }
 
+// MarkDeleted помечает URL пользователя как удалённые.
 func (r *PostgresRepository) MarkDeleted(ctx context.Context, ids []string, userID string) error {
 	if len(ids) == 0 {
 		return nil
@@ -153,6 +161,7 @@ func (r *PostgresRepository) MarkDeleted(ctx context.Context, ids []string, user
 	return err
 }
 
+// Ping проверяет соединение с PostgreSQL.
 func (r *PostgresRepository) Ping(ctx context.Context) error {
 	return r.db.PingContext(ctx)
 }
