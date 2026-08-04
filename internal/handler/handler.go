@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/tkalexx/shorturl.git/internal/audit"
 	"github.com/tkalexx/shorturl.git/internal/auth"
 	"github.com/tkalexx/shorturl.git/internal/gzip"
 	"github.com/tkalexx/shorturl.git/internal/logger"
@@ -177,10 +178,14 @@ func (s *Service) GetUserURLs(ctx context.Context, userID string) ([]UserURLResp
 
 type Handler struct {
 	service *Service
+	auditor *audit.Auditor
 }
 
-func NewHandler(service *Service) *Handler {
-	return &Handler{service: service}
+func NewHandler(service *Service, auditor *audit.Auditor) *Handler {
+	if auditor == nil {
+		auditor = audit.NewAuditor()
+	}
+	return &Handler{service: service, auditor: auditor}
 }
 
 type ShortenRequest struct {
@@ -237,6 +242,8 @@ func (h *Handler) shortener(w http.ResponseWriter, r *http.Request) {
 		mapError(w, err)
 		return
 	}
+
+	h.auditor.LogShorten(userID, string(b))
 
 	w.Header().Set("Content-Type", "text/plain")
 
@@ -352,6 +359,9 @@ func (h *Handler) expander(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	userID, _ := auth.UserIDFromContext(r.Context())
+	h.auditor.LogFollow(userID, originalURL)
+
 	w.Header().Set("Location", originalURL)
 	w.WriteHeader(http.StatusTemporaryRedirect)
 }
@@ -367,12 +377,12 @@ func mapError(w http.ResponseWriter, err error) {
 	}
 }
 
-func NewRouter(service *Service, authManager *auth.Manager) chi.Router {
+func NewRouter(service *Service, authManager *auth.Manager, auditor *audit.Auditor) chi.Router {
 	r := chi.NewRouter()
 	r.Use(logger.LoggingMiddleware)
 	r.Use(gzip.Middleware)
 
-	h := NewHandler(service)
+	h := NewHandler(service, auditor)
 
 	r.Get("/ping", h.ping)
 
@@ -415,6 +425,8 @@ func (h *Handler) shortenJSON(w http.ResponseWriter, r *http.Request) {
 		mapError(w, err)
 		return
 	}
+
+	h.auditor.LogShorten(userID, req.URL)
 
 	w.Header().Set("Content-Type", "application/json")
 

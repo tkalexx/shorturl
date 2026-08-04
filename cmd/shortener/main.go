@@ -8,6 +8,7 @@ import (
 
 	"github.com/pressly/goose/v3"
 	"github.com/tkalexx/shorturl.git"
+	"github.com/tkalexx/shorturl.git/internal/audit"
 	"github.com/tkalexx/shorturl.git/internal/auth"
 	"github.com/tkalexx/shorturl.git/internal/config"
 	"github.com/tkalexx/shorturl.git/internal/db"
@@ -78,12 +79,16 @@ func run(cfg *config.Config) error {
 	service := handler.NewService(repo)
 	service.SetBaseURL(cfg.BaseURL)
 
+	auditor := audit.BuildFromConfig(cfg.AuditFile, cfg.AuditURL)
+
 	logger.Log.Info("Running server",
 		zap.String("address", cfg.RunAddr),
 		zap.String("base_url", cfg.BaseURL),
+		zap.String("audit_file", cfg.AuditFile),
+		zap.String("audit_url", cfg.AuditURL),
 	)
 
-	return http.ListenAndServe(cfg.RunAddr, handler.NewRouter(service, authManager))
+	return http.ListenAndServe(cfg.RunAddr, handler.NewRouter(service, authManager, auditor))
 }
 
 func runMigrations(db *sql.DB) error {

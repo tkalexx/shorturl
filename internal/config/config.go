@@ -16,6 +16,8 @@ type Config struct {
 	FileStoragePath string // путь к файлу хранения URL
 	DatabaseDSN     string
 	AuthSecret      string
+	AuditFile       string // путь к файлу аудита; пусто - аудит в файл отключён
+	AuditURL        string // URL удалённого приёмника аудита; пусто - отключён
 }
 
 // NewConfig инициализирует и парсит флаги командной строки
@@ -29,6 +31,8 @@ func NewConfig() *Config {
 	flag.StringVar(&cfg.DatabaseDSN, "database-dsn", "", "database connection string")
 	flag.StringVar(&cfg.DatabaseDSN, "d", "", "database connection string")
 	flag.StringVar(&cfg.AuthSecret, "auth-secret", "", "secret key for signing auth cookies")
+	flag.StringVar(&cfg.AuditFile, "audit-file", "", "path to audit log file")
+	flag.StringVar(&cfg.AuditURL, "audit-url", "", "remote audit receiver URL")
 	flag.Parse()
 
 	if envAddr := os.Getenv("SERVER_ADDRESS"); envAddr != "" {
@@ -49,6 +53,14 @@ func NewConfig() *Config {
 
 	if envSecret := os.Getenv("AUTH_SECRET"); envSecret != "" {
 		cfg.AuthSecret = envSecret
+	}
+
+	if envAuditFile := os.Getenv("AUDIT_FILE"); envAuditFile != "" {
+		cfg.AuditFile = envAuditFile
+	}
+
+	if envAuditURL := os.Getenv("AUDIT_URL"); envAuditURL != "" {
+		cfg.AuditURL = envAuditURL
 	}
 
 	if cfg.FileStoragePath == "" {

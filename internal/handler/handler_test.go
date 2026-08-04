@@ -28,7 +28,7 @@ func setupTestRouter(service *Service) chi.Router {
 	if err != nil {
 		panic(err)
 	}
-	return NewRouter(service, authManager)
+	return NewRouter(service, authManager, nil)
 }
 
 func withTestUser(req *http.Request, userID string) *http.Request {
@@ -50,7 +50,7 @@ func TestGenerateID(t *testing.T) {
 
 func TestShortener(t *testing.T) {
 	service := setupTestService()
-	h := NewHandler(service)
+	h := NewHandler(service, nil)
 
 	tests := []struct {
 		name        string
@@ -121,7 +121,7 @@ func TestShortener(t *testing.T) {
 
 func TestShortenerDuplicate(t *testing.T) {
 	service := setupTestService()
-	h := NewHandler(service)
+	h := NewHandler(service, nil)
 
 	req1 := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("https://praktikum.yandex.ru"))
 	req1.Header.Set("Content-Type", "text/plain")
@@ -151,7 +151,7 @@ func TestShortenerDuplicate(t *testing.T) {
 
 func TestExpander(t *testing.T) {
 	service := setupTestService()
-	h := NewHandler(service)
+	h := NewHandler(service, nil)
 
 	shortURL, _, err := service.Shorten(context.Background(), "https://praktikum.yandex.ru", "user-1")
 	if err != nil {
@@ -213,7 +213,7 @@ func TestExpander(t *testing.T) {
 
 func TestShortenJSONContentTypeValidation(t *testing.T) {
 	service := setupTestService()
-	h := NewHandler(service)
+	h := NewHandler(service, nil)
 
 	tests := []struct {
 		name        string
@@ -269,7 +269,7 @@ func TestShortenJSONContentTypeValidation(t *testing.T) {
 
 func TestShortenJSON(t *testing.T) {
 	service := setupTestService()
-	h := NewHandler(service)
+	h := NewHandler(service, nil)
 
 	tests := []struct {
 		name       string
@@ -322,7 +322,7 @@ func TestShortenJSON(t *testing.T) {
 
 func TestShortenJSONResponseFormat(t *testing.T) {
 	service := setupTestService()
-	h := NewHandler(service)
+	h := NewHandler(service, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/shorten", strings.NewReader(`{"url":"https://example.com"}`))
 	req.Header.Set("Content-Type", "application/json")
