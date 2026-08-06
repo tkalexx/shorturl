@@ -242,8 +242,8 @@ func (h *Handler) shortener(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID, err := auth.UserIDFromContext(r.Context())
-	if err != nil {
+	userID, ok := auth.UserIDFromContext(r.Context())
+	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -280,8 +280,8 @@ func (h *Handler) shortenBatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID, err := auth.UserIDFromContext(r.Context())
-	if err != nil {
+	userID, ok := auth.UserIDFromContext(r.Context())
+	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -312,8 +312,8 @@ func (h *Handler) shortenBatch(w http.ResponseWriter, r *http.Request) {
 
 // userURLs возвращает все URL, сокращённые текущим пользователем
 func (h *Handler) userURLs(w http.ResponseWriter, r *http.Request) {
-	userID, err := auth.UserIDFromContext(r.Context())
-	if err != nil {
+	userID, ok := auth.UserIDFromContext(r.Context())
+	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -338,8 +338,8 @@ func (h *Handler) userURLs(w http.ResponseWriter, r *http.Request) {
 
 // deleteUserURLs асинхронно удаляет URL пользователя
 func (h *Handler) deleteUserURLs(w http.ResponseWriter, r *http.Request) {
-	userID, err := auth.UserIDFromContext(r.Context())
-	if err != nil {
+	userID, ok := auth.UserIDFromContext(r.Context())
+	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -376,7 +376,10 @@ func (h *Handler) expander(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID, _ := auth.UserIDFromContext(r.Context())
+	userID := ""
+	if id, ok := auth.UserIDFromContext(r.Context()); ok {
+		userID = id
+	}
 	h.auditor.LogFollow(userID, originalURL)
 
 	w.Header().Set("Location", originalURL)
@@ -395,7 +398,7 @@ func mapError(w http.ResponseWriter, err error) {
 }
 
 // NewRouter собирает chi-роутер со всеми эндпоинтами сервиса,
-// middleware логирования, gzip и аутентификации, а также pprof.
+// middleware логирования, gzip и аутентификации.
 func NewRouter(service *Service, authManager *auth.Manager, auditor *audit.Auditor) chi.Router {
 	r := chi.NewRouter()
 	r.Use(logger.LoggingMiddleware)
@@ -416,6 +419,13 @@ func NewRouter(service *Service, authManager *auth.Manager, auditor *audit.Audit
 
 	r.Get("/{id}", h.expander)
 
+	return r
+}
+
+// NewPprofRouter возвращает отдельный роутер с эндпоинтами pprof.
+// Его следует биндить на отдельный адрес (например localhost), а не на публичный API.
+func NewPprofRouter() chi.Router {
+	r := chi.NewRouter()
 	r.HandleFunc("/debug/pprof/", pprof.Index)
 	r.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
 	r.HandleFunc("/debug/pprof/profile", pprof.Profile)
@@ -424,7 +434,6 @@ func NewRouter(service *Service, authManager *auth.Manager, auditor *audit.Audit
 	r.Handle("/debug/pprof/heap", pprof.Handler("heap"))
 	r.Handle("/debug/pprof/allocs", pprof.Handler("allocs"))
 	r.Handle("/debug/pprof/goroutine", pprof.Handler("goroutine"))
-
 	return r
 }
 
@@ -436,8 +445,8 @@ func (h *Handler) shortenJSON(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID, err := auth.UserIDFromContext(r.Context())
-	if err != nil {
+	userID, ok := auth.UserIDFromContext(r.Context())
+	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}

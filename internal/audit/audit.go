@@ -13,6 +13,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const auditQueueSize = 1024
+
 // ActionShorten - действие аудита при создании короткой ссылки.
 const ActionShorten = "shorten"
 
@@ -36,11 +38,20 @@ type Observer interface {
 type Auditor struct {
 	mu        sync.RWMutex
 	observers []Observer
+	events    chan Event
+	done      chan struct{}
+	wg        sync.WaitGroup
 }
 
-// NewAuditor создаёт пустой Auditor без подписчиков.
+// NewAuditor создаёт Auditor без подписчиков и запускает диспетчер событий.
 func NewAuditor() *Auditor {
-	return &Auditor{}
+	a := &Auditor{
+		events: make(chan Event, auditQueueSize),
+		done:   make(chan struct{}),
+	}
+	a.wg.Add(1)
+	go a.dispatch()
+	return a
 }
 
 // Subscribe добавляет приёмник аудита.
@@ -53,16 +64,57 @@ func (a *Auditor) Subscribe(o Observer) {
 	a.observers = append(a.observers, o)
 }
 
-// Notify уведомляет всех подписчиков о событии.
+// Notify ставит событие в очередь на асинхронную доставку подписчикам.
 func (a *Auditor) Notify(event Event) {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
+	select {
+	case a.events <- event:
+	case <-a.done:
+	default:
+		logger.Log.Error("audit queue full, dropping event")
+	}
+}
 
-	for _, o := range a.observers {
+func (a *Auditor) dispatch() {
+	defer a.wg.Done()
+	for {
+		select {
+		case event := <-a.events:
+			a.deliver(event)
+		case <-a.done:
+			for {
+				select {
+				case event := <-a.events:
+					a.deliver(event)
+				default:
+					return
+				}
+			}
+		}
+	}
+}
+
+func (a *Auditor) deliver(event Event) {
+	a.mu.RLock()
+	observers := make([]Observer, len(a.observers))
+	copy(observers, a.observers)
+	a.mu.RUnlock()
+
+	for _, o := range observers {
 		if err := o.Notify(event); err != nil {
 			logger.Log.Error("audit notify failed", zap.Error(err))
 		}
 	}
+}
+
+// Close останавливает диспетчер и дожидается доставки уже поставленных в очередь событий.
+func (a *Auditor) Close() {
+	select {
+	case <-a.done:
+		return
+	default:
+		close(a.done)
+	}
+	a.wg.Wait()
 }
 
 // LogShorten формирует и рассылает событие создания ссылки.
@@ -90,12 +142,12 @@ type FileObserver struct {
 	path string
 	mu   sync.Mutex
 	file *os.File
-	buf  []byte
+	buf  bytes.Buffer
 }
 
 // NewFileObserver создаёт приёмник, пишущий в path.
 func NewFileObserver(path string) *FileObserver {
-	return &FileObserver{path: path, buf: make([]byte, 0, 256)}
+	return &FileObserver{path: path}
 }
 
 func (f *FileObserver) openLocked() error {
@@ -112,11 +164,6 @@ func (f *FileObserver) openLocked() error {
 
 // Notify добавляет событие в конец файла на новой строке.
 func (f *FileObserver) Notify(event Event) error {
-	data, err := json.Marshal(event)
-	if err != nil {
-		return fmt.Errorf("marshal audit event: %w", err)
-	}
-
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
@@ -124,11 +171,12 @@ func (f *FileObserver) Notify(event Event) error {
 		return err
 	}
 
-	f.buf = f.buf[:0]
-	f.buf = append(f.buf, data...)
-	f.buf = append(f.buf, '\n')
+	f.buf.Reset()
+	if err := json.NewEncoder(&f.buf).Encode(event); err != nil {
+		return fmt.Errorf("marshal audit event: %w", err)
+	}
 
-	if _, err := f.file.Write(f.buf); err != nil {
+	if _, err := f.file.Write(f.buf.Bytes()); err != nil {
 		return fmt.Errorf("write audit file: %w", err)
 	}
 	return nil

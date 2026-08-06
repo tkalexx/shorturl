@@ -24,26 +24,43 @@ func (r *recordingObserver) Notify(event Event) error {
 	return nil
 }
 
+func waitForEvents(t *testing.T, obs *recordingObserver, n int) []Event {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		obs.mu.Lock()
+		if len(obs.events) >= n {
+			events := append([]Event(nil), obs.events...)
+			obs.mu.Unlock()
+			return events
+		}
+		obs.mu.Unlock()
+		time.Sleep(5 * time.Millisecond)
+	}
+	obs.mu.Lock()
+	defer obs.mu.Unlock()
+	t.Fatalf("timed out waiting for %d events, got %d", n, len(obs.events))
+	return nil
+}
+
 func TestAuditorNotifiesSubscribers(t *testing.T) {
 	auditor := NewAuditor()
+	defer auditor.Close()
+
 	obs := &recordingObserver{}
 	auditor.Subscribe(obs)
 
 	auditor.LogShorten("user-1", "https://example.com/long")
 	auditor.LogFollow("", "https://example.com/long")
 
-	obs.mu.Lock()
-	defer obs.mu.Unlock()
-	if len(obs.events) != 2 {
-		t.Fatalf("expected 2 events, got %d", len(obs.events))
+	events := waitForEvents(t, obs, 2)
+	if events[0].Action != ActionShorten || events[0].UserID != "user-1" {
+		t.Fatalf("unexpected shorten event: %+v", events[0])
 	}
-	if obs.events[0].Action != ActionShorten || obs.events[0].UserID != "user-1" {
-		t.Fatalf("unexpected shorten event: %+v", obs.events[0])
+	if events[1].Action != ActionFollow || events[1].URL != "https://example.com/long" {
+		t.Fatalf("unexpected follow event: %+v", events[1])
 	}
-	if obs.events[1].Action != ActionFollow || obs.events[1].URL != "https://example.com/long" {
-		t.Fatalf("unexpected follow event: %+v", obs.events[1])
-	}
-	if obs.events[0].TS == 0 || obs.events[1].TS == 0 {
+	if events[0].TS == 0 || events[1].TS == 0 {
 		t.Fatal("expected non-zero timestamps")
 	}
 }
@@ -118,7 +135,18 @@ func TestHTTPObserverPostsJSON(t *testing.T) {
 func TestBuildFromConfig(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "a.log")
 	auditor := BuildFromConfig(path, "")
+	defer auditor.Close()
+
 	auditor.LogShorten("u", "https://example.com")
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		data, err := os.ReadFile(path)
+		if err == nil && len(data) > 0 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -129,6 +157,7 @@ func TestBuildFromConfig(t *testing.T) {
 	}
 
 	empty := BuildFromConfig("", "")
+	defer empty.Close()
 	empty.LogShorten("u", "https://example.com")
 }
 

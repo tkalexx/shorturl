@@ -18,6 +18,7 @@ type Config struct {
 	AuthSecret      string // секрет подписи auth-cookie
 	AuditFile       string // путь к файлу аудита; пусто - аудит в файл отключён
 	AuditURL        string // URL удалённого приёмника аудита; пусто - отключён
+	PprofAddr       string // адрес pprof-сервера; пусто - pprof отключён
 }
 
 // NewConfig инициализирует и парсит флаги командной строки
@@ -33,6 +34,7 @@ func NewConfig() *Config {
 	flag.StringVar(&cfg.AuthSecret, "auth-secret", "", "secret key for signing auth cookies")
 	flag.StringVar(&cfg.AuditFile, "audit-file", "", "path to audit log file")
 	flag.StringVar(&cfg.AuditURL, "audit-url", "", "remote audit receiver URL")
+	flag.StringVar(&cfg.PprofAddr, "pprof", "localhost:6060", "address for pprof endpoints (empty to disable)")
 	flag.Parse()
 
 	if envAddr := os.Getenv("SERVER_ADDRESS"); envAddr != "" {
@@ -61,6 +63,10 @@ func NewConfig() *Config {
 
 	if envAuditURL := os.Getenv("AUDIT_URL"); envAuditURL != "" {
 		cfg.AuditURL = envAuditURL
+	}
+
+	if envPprof := os.Getenv("PPROF_ADDR"); envPprof != "" {
+		cfg.PprofAddr = envPprof
 	}
 
 	if cfg.FileStoragePath == "" {

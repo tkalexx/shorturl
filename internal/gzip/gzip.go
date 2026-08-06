@@ -89,10 +89,7 @@ func newCompressReader(r io.ReadCloser) (*compressReader, error) {
 	zr := gzipReaderPool.Get().(*gzip.Reader)
 	if err := zr.Reset(r); err != nil {
 		gzipReaderPool.Put(zr)
-		zr, err = gzip.NewReader(r)
-		if err != nil {
-			return nil, err
-		}
+		return nil, err
 	}
 	return &compressReader{r: r, zr: zr}, nil
 }

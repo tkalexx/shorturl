@@ -80,12 +80,23 @@ func run(cfg *config.Config) error {
 	service.SetBaseURL(cfg.BaseURL)
 
 	auditor := audit.BuildFromConfig(cfg.AuditFile, cfg.AuditURL)
+	defer auditor.Close()
+
+	if cfg.PprofAddr != "" {
+		go func() {
+			logger.Log.Info("Starting pprof server", zap.String("address", cfg.PprofAddr))
+			if err := http.ListenAndServe(cfg.PprofAddr, handler.NewPprofRouter()); err != nil {
+				logger.Log.Error("pprof server stopped", zap.Error(err))
+			}
+		}()
+	}
 
 	logger.Log.Info("Running server",
 		zap.String("address", cfg.RunAddr),
 		zap.String("base_url", cfg.BaseURL),
 		zap.String("audit_file", cfg.AuditFile),
 		zap.String("audit_url", cfg.AuditURL),
+		zap.String("pprof_addr", cfg.PprofAddr),
 	)
 
 	return http.ListenAndServe(cfg.RunAddr, handler.NewRouter(service, authManager, auditor))
