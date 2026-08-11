@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"database/sql"
 	"errors"
 	"fmt"
 	"io/fs"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -14,16 +16,19 @@ import (
 	"time"
 
 	"github.com/pressly/goose/v3"
+	"github.com/soheilhy/cmux"
 	"github.com/tkalexx/shorturl.git"
 	"github.com/tkalexx/shorturl.git/internal/audit"
 	"github.com/tkalexx/shorturl.git/internal/auth"
 	"github.com/tkalexx/shorturl.git/internal/cert"
 	"github.com/tkalexx/shorturl.git/internal/config"
 	"github.com/tkalexx/shorturl.git/internal/db"
+	"github.com/tkalexx/shorturl.git/internal/grpcserver"
 	"github.com/tkalexx/shorturl.git/internal/handler"
 	"github.com/tkalexx/shorturl.git/internal/logger"
 	"github.com/tkalexx/shorturl.git/internal/repository"
 	"go.uber.org/zap"
+	"google.golang.org/grpc"
 )
 
 const shutdownTimeout = 30 * time.Second
@@ -141,29 +146,51 @@ func run(cfg *config.Config) error {
 		zap.String("trusted_subnet", cfg.TrustedSubnet),
 	)
 
-	router := handler.NewRouter(service, authManager, auditor, cfg.TrustedSubnet)
-	server := &http.Server{
-		Addr:    cfg.RunAddr,
-		Handler: router,
+	listener, err := net.Listen("tcp", cfg.RunAddr)
+	if err != nil {
+		return err
+	}
+	if cfg.EnableHTTPS {
+		tlsCert, err := cert.LoadOrGenerate(cert.CertFile, cert.KeyFile)
+		if err != nil {
+			return err
+		}
+		logger.Log.Info("HTTPS enabled",
+			zap.String("cert", cert.CertFile),
+			zap.String("key", cert.KeyFile),
+		)
+		listener = tls.NewListener(listener, &tls.Config{
+			Certificates: []tls.Certificate{tlsCert},
+			NextProtos:   []string{"h2", "http/1.1"},
+		})
 	}
 
-	serverErr := make(chan error, 1)
+	mux := cmux.New(listener)
+	grpcL := mux.MatchWithWriters(cmux.HTTP2MatchHeaderFieldSendSettings("content-type", "application/grpc"))
+	httpL := mux.Match(cmux.Any())
+
+	router := handler.NewRouter(service, authManager, auditor, cfg.TrustedSubnet)
+	httpServer := &http.Server{Handler: router}
+	grpcServer := grpcserver.NewGRPCServer(service, authManager, auditor)
+
+	serverErr := make(chan error, 3)
 	go func() {
-		var err error
-		if cfg.EnableHTTPS {
-			if err = cert.EnsureFiles(cert.CertFile, cert.KeyFile); err != nil {
-				serverErr <- err
-				return
-			}
-			logger.Log.Info("HTTPS enabled",
-				zap.String("cert", cert.CertFile),
-				zap.String("key", cert.KeyFile),
-			)
-			err = server.ListenAndServeTLS(cert.CertFile, cert.KeyFile)
-		} else {
-			err = server.ListenAndServe()
+		if err := grpcServer.Serve(grpcL); err != nil && !errors.Is(err, grpc.ErrServerStopped) {
+			serverErr <- fmt.Errorf("grpc: %w", err)
 		}
-		serverErr <- err
+	}()
+	go func() {
+		if err := httpServer.Serve(httpL); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serverErr <- fmt.Errorf("http: %w", err)
+		}
+	}()
+	go func() {
+		if err := mux.Serve(); err != nil {
+			// cmux returns error when listener is closed during shutdown
+			if !errors.Is(err, net.ErrClosed) && !errors.Is(err, cmux.ErrListenerClosed) {
+				serverErr <- fmt.Errorf("cmux: %w", err)
+			}
+		}
 	}()
 
 	stop := make(chan os.Signal, 1)
@@ -171,9 +198,7 @@ func run(cfg *config.Config) error {
 
 	select {
 	case err := <-serverErr:
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			return err
-		}
+		return err
 	case sig := <-stop:
 		logger.Log.Info("shutdown signal received", zap.String("signal", sig.String()))
 	}
@@ -181,9 +206,22 @@ func run(cfg *config.Config) error {
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 
-	if err := server.Shutdown(ctx); err != nil {
+	stopped := make(chan struct{})
+	go func() {
+		grpcServer.GracefulStop()
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+	case <-ctx.Done():
+		grpcServer.Stop()
+	}
+
+	if err := httpServer.Shutdown(ctx); err != nil {
 		logger.Log.Error("server shutdown failed", zap.Error(err))
 	}
+	_ = listener.Close()
+
 	if pprofServer != nil {
 		if err := pprofServer.Shutdown(ctx); err != nil {
 			logger.Log.Error("pprof shutdown failed", zap.Error(err))
