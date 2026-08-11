@@ -31,7 +31,10 @@ func main() {
 	printBuildInfo()
 
 	// обрабатываем аргументы командной строки
-	cfg := config.NewConfig()
+	cfg, err := config.NewConfig()
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	if err := run(cfg); err != nil {
 		log.Fatal(err)
