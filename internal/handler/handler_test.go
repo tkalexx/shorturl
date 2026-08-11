@@ -26,7 +26,7 @@ func setupTestService() *Service {
 func setupTestRouter(service *Service) chi.Router {
 	authManager, err := auth.NewManager("test-auth-secret-16chars")
 	if err != nil {
-		panic(err)
+		return nil
 	}
 	return NewRouter(service, authManager, nil)
 }

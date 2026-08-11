@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"io/fs"
+	"log"
 	"net/http"
 
 	"github.com/pressly/goose/v3"
@@ -23,7 +24,7 @@ func main() {
 	cfg := config.NewConfig()
 
 	if err := run(cfg); err != nil {
-		panic(err)
+		log.Fatal(err)
 	}
 }
 
