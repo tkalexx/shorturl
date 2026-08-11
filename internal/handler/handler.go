@@ -12,6 +12,7 @@ import (
 	"net/http/pprof"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -37,6 +38,7 @@ type Service struct {
 	baseURL  string
 	deleteCh chan deleteTask
 	done     chan struct{}
+	wg       sync.WaitGroup
 }
 
 // NewService создаёт сервис поверх репозитория и запускает воркер удаления.

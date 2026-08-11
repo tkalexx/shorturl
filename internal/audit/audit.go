@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"sync"
@@ -115,6 +116,17 @@ func (a *Auditor) Close() {
 		close(a.done)
 	}
 	a.wg.Wait()
+
+	a.mu.RLock()
+	observers := append([]Observer(nil), a.observers...)
+	a.mu.RUnlock()
+	for _, o := range observers {
+		if c, ok := o.(io.Closer); ok {
+			if err := c.Close(); err != nil {
+				logger.Log.Error("audit observer close failed", zap.Error(err))
+			}
+		}
+	}
 }
 
 // LogShorten формирует и рассылает событие создания ссылки.
@@ -180,6 +192,21 @@ func (f *FileObserver) Notify(event Event) error {
 		return fmt.Errorf("write audit file: %w", err)
 	}
 	return nil
+}
+
+// Close сбрасывает буфер ОС и закрывает файл аудита.
+func (f *FileObserver) Close() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.file == nil {
+		return nil
+	}
+	err := f.file.Sync()
+	if closeErr := f.file.Close(); err == nil {
+		err = closeErr
+	}
+	f.file = nil
+	return err
 }
 
 // HTTPObserver отправляет события аудита POST-запросом на удалённый URL.

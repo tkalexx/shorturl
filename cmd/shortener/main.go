@@ -3,10 +3,15 @@ package main
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"github.com/pressly/goose/v3"
 	"github.com/tkalexx/shorturl.git"
@@ -20,6 +25,8 @@ import (
 	"github.com/tkalexx/shorturl.git/internal/repository"
 	"go.uber.org/zap"
 )
+
+const shutdownTimeout = 30 * time.Second
 
 var (
 	buildVersion string
@@ -105,14 +112,20 @@ func run(cfg *config.Config) error {
 
 	service := handler.NewService(repo)
 	service.SetBaseURL(cfg.BaseURL)
+	defer service.Close()
 
 	auditor := audit.BuildFromConfig(cfg.AuditFile, cfg.AuditURL)
 	defer auditor.Close()
 
+	var pprofServer *http.Server
 	if cfg.PprofAddr != "" {
+		pprofServer = &http.Server{
+			Addr:    cfg.PprofAddr,
+			Handler: handler.NewPprofRouter(),
+		}
 		go func() {
 			logger.Log.Info("Starting pprof server", zap.String("address", cfg.PprofAddr))
-			if err := http.ListenAndServe(cfg.PprofAddr, handler.NewPprofRouter()); err != nil {
+			if err := pprofServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				logger.Log.Error("pprof server stopped", zap.Error(err))
 			}
 		}()
@@ -128,18 +141,56 @@ func run(cfg *config.Config) error {
 	)
 
 	router := handler.NewRouter(service, authManager, auditor)
-	if cfg.EnableHTTPS {
-		if err := cert.EnsureFiles(cert.CertFile, cert.KeyFile); err != nil {
-			return err
-		}
-		logger.Log.Info("HTTPS enabled",
-			zap.String("cert", cert.CertFile),
-			zap.String("key", cert.KeyFile),
-		)
-		return http.ListenAndServeTLS(cfg.RunAddr, cert.CertFile, cert.KeyFile, router)
+	server := &http.Server{
+		Addr:    cfg.RunAddr,
+		Handler: router,
 	}
 
-	return http.ListenAndServe(cfg.RunAddr, router)
+	serverErr := make(chan error, 1)
+	go func() {
+		var err error
+		if cfg.EnableHTTPS {
+			if err = cert.EnsureFiles(cert.CertFile, cert.KeyFile); err != nil {
+				serverErr <- err
+				return
+			}
+			logger.Log.Info("HTTPS enabled",
+				zap.String("cert", cert.CertFile),
+				zap.String("key", cert.KeyFile),
+			)
+			err = server.ListenAndServeTLS(cert.CertFile, cert.KeyFile)
+		} else {
+			err = server.ListenAndServe()
+		}
+		serverErr <- err
+	}()
+
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+
+	select {
+	case err := <-serverErr:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+	case sig := <-stop:
+		logger.Log.Info("shutdown signal received", zap.String("signal", sig.String()))
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+
+	if err := server.Shutdown(ctx); err != nil {
+		logger.Log.Error("server shutdown failed", zap.Error(err))
+	}
+	if pprofServer != nil {
+		if err := pprofServer.Shutdown(ctx); err != nil {
+			logger.Log.Error("pprof shutdown failed", zap.Error(err))
+		}
+	}
+
+	logger.Log.Info("server stopped gracefully")
+	return nil
 }
 
 func runMigrations(db *sql.DB) error {
