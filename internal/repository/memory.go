@@ -18,6 +18,7 @@ type InMemory struct {
 	reverse map[string]string // url -> id
 }
 
+// NewInMemory создаёт пустое in-memory хранилище.
 func NewInMemory() Repository {
 	return &InMemory{
 		urls:    make(map[string]memoryRecord),
@@ -25,6 +26,7 @@ func NewInMemory() Repository {
 	}
 }
 
+// SaveBatch сохраняет пакет URL без проверки уникальности.
 func (m *InMemory) SaveBatch(ctx context.Context, urls []URLPair) (map[string]string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -38,10 +40,12 @@ func (m *InMemory) SaveBatch(ctx context.Context, urls []URLPair) (map[string]st
 	return result, nil
 }
 
+// Ping всегда успешен для in-memory хранилища.
 func (m *InMemory) Ping(ctx context.Context) error {
 	return nil
 }
 
+// Save сохраняет пару id→url; при конфликте оригинального URL возвращает ErrURLExists.
 func (m *InMemory) Save(_ context.Context, id, url, userID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -55,6 +59,7 @@ func (m *InMemory) Save(_ context.Context, id, url, userID string) error {
 	return nil
 }
 
+// Get возвращает оригинальный URL, флаг удаления и признак наличия записи.
 func (m *InMemory) Get(_ context.Context, id string) (string, bool, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -65,6 +70,7 @@ func (m *InMemory) Get(_ context.Context, id string) (string, bool, bool) {
 	return rec.URL, rec.Deleted, true
 }
 
+// FindByURL ищет короткий идентификатор по оригинальному URL.
 func (m *InMemory) FindByURL(_ context.Context, url string) (string, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -72,6 +78,7 @@ func (m *InMemory) FindByURL(_ context.Context, url string) (string, bool) {
 	return id, ok
 }
 
+// GetByUserID возвращает все неудалённые URL пользователя.
 func (m *InMemory) GetByUserID(_ context.Context, userID string) ([]UserURL, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -85,6 +92,7 @@ func (m *InMemory) GetByUserID(_ context.Context, userID string) ([]UserURL, err
 	return result, nil
 }
 
+// MarkDeleted помечает URL пользователя как удалённые.
 func (m *InMemory) MarkDeleted(_ context.Context, ids []string, userID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

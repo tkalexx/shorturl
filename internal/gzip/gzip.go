@@ -5,7 +5,20 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 )
+
+var gzipWriterPool = sync.Pool{
+	New: func() any {
+		return gzip.NewWriter(io.Discard)
+	},
+}
+
+var gzipReaderPool = sync.Pool{
+	New: func() any {
+		return new(gzip.Reader)
+	},
+}
 
 // compressWriter реализует интерфейс http.ResponseWriter и позволяет прозрачно для сервера
 // сжимать передаваемые данные и выставлять правильные HTTP-заголовки
@@ -20,10 +33,12 @@ func newCompressWriter(w http.ResponseWriter) *compressWriter {
 	return &compressWriter{w: w}
 }
 
+// Header возвращает заголовки исходного ResponseWriter.
 func (c *compressWriter) Header() http.Header {
 	return c.w.Header()
 }
 
+// Write пишет тело ответа, при необходимости через gzip.
 func (c *compressWriter) Write(p []byte) (int, error) {
 	if !c.wroteHeader {
 		c.WriteHeader(http.StatusOK)
@@ -34,6 +49,7 @@ func (c *compressWriter) Write(p []byte) (int, error) {
 	return c.w.Write(p)
 }
 
+// WriteHeader отправляет статус и включает gzip для подходящих Content-Type.
 func (c *compressWriter) WriteHeader(statusCode int) {
 	if c.wroteHeader {
 		return
@@ -42,18 +58,24 @@ func (c *compressWriter) WriteHeader(statusCode int) {
 
 	if statusCode < 300 && shouldCompress(c.w.Header().Get("Content-Type")) {
 		c.w.Header().Set("Content-Encoding", "gzip")
-		c.zw = gzip.NewWriter(c.w)
+		zw := gzipWriterPool.Get().(*gzip.Writer)
+		zw.Reset(c.w)
+		c.zw = zw
 		c.compressing = true
 	}
 	c.w.WriteHeader(statusCode)
 }
 
-// Close закрывает gzip.Writer и досылает все данные из буфера.
+// Close закрывает gzip.Writer и возвращает его в пул.
 func (c *compressWriter) Close() error {
-	if c.compressing {
-		return c.zw.Close()
+	if !c.compressing || c.zw == nil {
+		return nil
 	}
-	return nil
+	err := c.zw.Close()
+	gzipWriterPool.Put(c.zw)
+	c.zw = nil
+	c.compressing = false
+	return err
 }
 
 // compressReader реализует интерфейс io.ReadCloser и позволяет прозрачно для сервера
@@ -64,22 +86,28 @@ type compressReader struct {
 }
 
 func newCompressReader(r io.ReadCloser) (*compressReader, error) {
-	zr, err := gzip.NewReader(r)
-	if err != nil {
+	zr := gzipReaderPool.Get().(*gzip.Reader)
+	if err := zr.Reset(r); err != nil {
+		gzipReaderPool.Put(zr)
 		return nil, err
 	}
 	return &compressReader{r: r, zr: zr}, nil
 }
 
+// Read читает распакованные данные из gzip-потока.
 func (c *compressReader) Read(p []byte) (n int, err error) {
 	return c.zr.Read(p)
 }
 
+// Close закрывает gzip.Reader и исходное тело запроса.
 func (c *compressReader) Close() error {
-	if err := c.zr.Close(); err != nil {
-		return err
+	err := c.zr.Close()
+	gzipReaderPool.Put(c.zr)
+	c.zr = nil
+	if closeErr := c.r.Close(); err == nil {
+		err = closeErr
 	}
-	return c.r.Close()
+	return err
 }
 
 func shouldCompress(contentType string) bool {

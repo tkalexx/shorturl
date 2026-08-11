@@ -9,13 +9,16 @@ import (
 	"github.com/tkalexx/shorturl.git/internal/auth"
 )
 
-// Config хранит настройки сервиса
+// Config хранит настройки сервиса.
 type Config struct {
 	RunAddr         string // адрес и порт
 	BaseURL         string // базовый адрес сокращенных ссылок
 	FileStoragePath string // путь к файлу хранения URL
-	DatabaseDSN     string
-	AuthSecret      string
+	DatabaseDSN     string // строка подключения к PostgreSQL
+	AuthSecret      string // секрет подписи auth-cookie
+	AuditFile       string // путь к файлу аудита; пусто - аудит в файл отключён
+	AuditURL        string // URL удалённого приёмника аудита; пусто - отключён
+	PprofAddr       string // адрес pprof-сервера; пусто - pprof отключён
 }
 
 // NewConfig инициализирует и парсит флаги командной строки
@@ -29,6 +32,9 @@ func NewConfig() *Config {
 	flag.StringVar(&cfg.DatabaseDSN, "database-dsn", "", "database connection string")
 	flag.StringVar(&cfg.DatabaseDSN, "d", "", "database connection string")
 	flag.StringVar(&cfg.AuthSecret, "auth-secret", "", "secret key for signing auth cookies")
+	flag.StringVar(&cfg.AuditFile, "audit-file", "", "path to audit log file")
+	flag.StringVar(&cfg.AuditURL, "audit-url", "", "remote audit receiver URL")
+	flag.StringVar(&cfg.PprofAddr, "pprof", "localhost:6060", "address for pprof endpoints (empty to disable)")
 	flag.Parse()
 
 	if envAddr := os.Getenv("SERVER_ADDRESS"); envAddr != "" {
@@ -51,6 +57,18 @@ func NewConfig() *Config {
 		cfg.AuthSecret = envSecret
 	}
 
+	if envAuditFile := os.Getenv("AUDIT_FILE"); envAuditFile != "" {
+		cfg.AuditFile = envAuditFile
+	}
+
+	if envAuditURL := os.Getenv("AUDIT_URL"); envAuditURL != "" {
+		cfg.AuditURL = envAuditURL
+	}
+
+	if envPprof := os.Getenv("PPROF_ADDR"); envPprof != "" {
+		cfg.PprofAddr = envPprof
+	}
+
 	if cfg.FileStoragePath == "" {
 		cfg.FileStoragePath = "/tmp/short-url-db.json"
 	}
@@ -68,7 +86,7 @@ func NewConfig() *Config {
 	return cfg
 }
 
-// Validate проверяет обязательные настройки сервиса
+// Validate проверяет обязательные настройки сервиса.
 func (c *Config) Validate() error {
 	if _, err := auth.NewManager(c.AuthSecret); err != nil {
 		return errors.New("invalid auth secret: " + err.Error())

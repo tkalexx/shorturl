@@ -9,11 +9,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/pprof"
 	"net/url"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/tkalexx/shorturl.git/internal/audit"
 	"github.com/tkalexx/shorturl.git/internal/auth"
 	"github.com/tkalexx/shorturl.git/internal/gzip"
 	"github.com/tkalexx/shorturl.git/internal/logger"
@@ -21,6 +23,7 @@ import (
 	"go.uber.org/zap"
 )
 
+// Ошибки бизнес-логики сокращения и получения URL.
 var (
 	ErrInvalidURL  = errors.New("invalid URL format")
 	ErrEmptyURL    = errors.New("URL cannot be empty")
@@ -28,6 +31,7 @@ var (
 	ErrURLDeleted  = errors.New("URL deleted")
 )
 
+// Service реализует бизнес-логику сокращения URL и асинхронного удаления.
 type Service struct {
 	repo     repository.Repository
 	baseURL  string
@@ -35,6 +39,7 @@ type Service struct {
 	done     chan struct{}
 }
 
+// NewService создаёт сервис поверх репозитория и запускает воркер удаления.
 func NewService(repo repository.Repository) *Service {
 	s := &Service{
 		repo:     repo,
@@ -45,22 +50,25 @@ func NewService(repo repository.Repository) *Service {
 	return s
 }
 
+// BatchItem — элемент запроса пакетного сокращения URL.
 type BatchItem struct {
 	CorrelationID string `json:"correlation_id"`
 	OriginalURL   string `json:"original_url"`
 }
 
+// BatchResponseItem — элемент ответа пакетного сокращения URL.
 type BatchResponseItem struct {
 	CorrelationID string `json:"correlation_id"`
 	ShortURL      string `json:"short_url"`
 }
 
+// UserURLResponse — пара короткой и оригинальной ссылки пользователя.
 type UserURLResponse struct {
 	ShortURL    string `json:"short_url"`
 	OriginalURL string `json:"original_url"`
 }
 
-// Ping проверяет соединение с БД
+// Ping проверяет доступность хранилища.
 func (s *Service) Ping(ctx context.Context) error {
 	if s.repo == nil {
 		return fmt.Errorf("repository not initialized")
@@ -68,10 +76,13 @@ func (s *Service) Ping(ctx context.Context) error {
 	return s.repo.Ping(ctx)
 }
 
+// SetBaseURL задаёт базовый адрес для формирования коротких ссылок.
 func (s *Service) SetBaseURL(url string) {
 	s.baseURL = strings.TrimSuffix(url, "/")
 }
 
+// Shorten сохраняет URL и возвращает короткую ссылку.
+// Второй результат — true, если URL уже существовал (конфликт).
 func (s *Service) Shorten(ctx context.Context, originalURL, userID string) (string, bool, error) {
 	originalURL = strings.TrimSpace(originalURL)
 	if originalURL == "" {
@@ -103,6 +114,7 @@ func (s *Service) Shorten(ctx context.Context, originalURL, userID string) (stri
 	return s.baseURL + "/" + id, false, nil
 }
 
+// ShortenBatch пакетно сокращает список URL и сохраняет их за пользователем.
 func (s *Service) ShortenBatch(ctx context.Context, items []BatchItem, userID string) ([]BatchResponseItem, error) {
 	if len(items) == 0 {
 		return []BatchResponseItem{}, nil
@@ -145,6 +157,7 @@ func (s *Service) ShortenBatch(ctx context.Context, items []BatchItem, userID st
 	return result, nil
 }
 
+// Get возвращает оригинальный URL по короткому идентификатору.
 func (s *Service) Get(ctx context.Context, id string) (string, error) {
 	if id == "" {
 		return "", ErrEmptyURL
@@ -159,6 +172,7 @@ func (s *Service) Get(ctx context.Context, id string) (string, error) {
 	return url, nil
 }
 
+// GetUserURLs возвращает все неудалённые URL, сокращённые пользователем.
 func (s *Service) GetUserURLs(ctx context.Context, userID string) ([]UserURLResponse, error) {
 	urls, err := s.repo.GetByUserID(ctx, userID)
 	if err != nil {
@@ -175,18 +189,26 @@ func (s *Service) GetUserURLs(ctx context.Context, userID string) ([]UserURLResp
 	return result, nil
 }
 
+// Handler обрабатывает HTTP-запросы сервиса сокращения URL.
 type Handler struct {
 	service *Service
+	auditor *audit.Auditor
 }
 
-func NewHandler(service *Service) *Handler {
-	return &Handler{service: service}
+// NewHandler создаёт HTTP-обработчик поверх сервиса и аудитора.
+func NewHandler(service *Service, auditor *audit.Auditor) *Handler {
+	if auditor == nil {
+		auditor = audit.NewAuditor()
+	}
+	return &Handler{service: service, auditor: auditor}
 }
 
+// ShortenRequest — тело JSON-запроса POST /api/shorten.
 type ShortenRequest struct {
 	URL string `json:"url"`
 }
 
+// ShortenResponse — тело JSON-ответа POST /api/shorten.
 type ShortenResponse struct {
 	Result string `json:"result"`
 }
@@ -220,8 +242,8 @@ func (h *Handler) shortener(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID, err := auth.UserIDFromContext(r.Context())
-	if err != nil {
+	userID, ok := auth.UserIDFromContext(r.Context())
+	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -237,6 +259,8 @@ func (h *Handler) shortener(w http.ResponseWriter, r *http.Request) {
 		mapError(w, err)
 		return
 	}
+
+	h.auditor.LogShorten(userID, string(b))
 
 	w.Header().Set("Content-Type", "text/plain")
 
@@ -256,8 +280,8 @@ func (h *Handler) shortenBatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID, err := auth.UserIDFromContext(r.Context())
-	if err != nil {
+	userID, ok := auth.UserIDFromContext(r.Context())
+	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -288,8 +312,8 @@ func (h *Handler) shortenBatch(w http.ResponseWriter, r *http.Request) {
 
 // userURLs возвращает все URL, сокращённые текущим пользователем
 func (h *Handler) userURLs(w http.ResponseWriter, r *http.Request) {
-	userID, err := auth.UserIDFromContext(r.Context())
-	if err != nil {
+	userID, ok := auth.UserIDFromContext(r.Context())
+	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -314,8 +338,8 @@ func (h *Handler) userURLs(w http.ResponseWriter, r *http.Request) {
 
 // deleteUserURLs асинхронно удаляет URL пользователя
 func (h *Handler) deleteUserURLs(w http.ResponseWriter, r *http.Request) {
-	userID, err := auth.UserIDFromContext(r.Context())
-	if err != nil {
+	userID, ok := auth.UserIDFromContext(r.Context())
+	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -352,6 +376,12 @@ func (h *Handler) expander(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	userID := ""
+	if id, ok := auth.UserIDFromContext(r.Context()); ok {
+		userID = id
+	}
+	h.auditor.LogFollow(userID, originalURL)
+
 	w.Header().Set("Location", originalURL)
 	w.WriteHeader(http.StatusTemporaryRedirect)
 }
@@ -367,12 +397,14 @@ func mapError(w http.ResponseWriter, err error) {
 	}
 }
 
-func NewRouter(service *Service, authManager *auth.Manager) chi.Router {
+// NewRouter собирает chi-роутер со всеми эндпоинтами сервиса,
+// middleware логирования, gzip и аутентификации.
+func NewRouter(service *Service, authManager *auth.Manager, auditor *audit.Auditor) chi.Router {
 	r := chi.NewRouter()
 	r.Use(logger.LoggingMiddleware)
 	r.Use(gzip.Middleware)
 
-	h := NewHandler(service)
+	h := NewHandler(service, auditor)
 
 	r.Get("/ping", h.ping)
 
@@ -390,6 +422,21 @@ func NewRouter(service *Service, authManager *auth.Manager) chi.Router {
 	return r
 }
 
+// NewPprofRouter возвращает отдельный роутер с эндпоинтами pprof.
+// Его следует биндить на отдельный адрес (например localhost), а не на публичный API.
+func NewPprofRouter() chi.Router {
+	r := chi.NewRouter()
+	r.HandleFunc("/debug/pprof/", pprof.Index)
+	r.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	r.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	r.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	r.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	r.Handle("/debug/pprof/heap", pprof.Handler("heap"))
+	r.Handle("/debug/pprof/allocs", pprof.Handler("allocs"))
+	r.Handle("/debug/pprof/goroutine", pprof.Handler("goroutine"))
+	return r
+}
+
 // shortenJSON - новый handler для POST /api/shorten
 func (h *Handler) shortenJSON(w http.ResponseWriter, r *http.Request) {
 	contentType := r.Header.Get("Content-Type")
@@ -398,8 +445,8 @@ func (h *Handler) shortenJSON(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userID, err := auth.UserIDFromContext(r.Context())
-	if err != nil {
+	userID, ok := auth.UserIDFromContext(r.Context())
+	if !ok {
 		http.Error(w, "Unauthorized", http.StatusUnauthorized)
 		return
 	}
@@ -415,6 +462,8 @@ func (h *Handler) shortenJSON(w http.ResponseWriter, r *http.Request) {
 		mapError(w, err)
 		return
 	}
+
+	h.auditor.LogShorten(userID, req.URL)
 
 	w.Header().Set("Content-Type", "application/json")
 

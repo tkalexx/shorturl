@@ -88,11 +88,10 @@ func (r *FileRepository) save() error {
 		records = append(records, *rec)
 	}
 
-	encoder := json.NewEncoder(file)
-	encoder.SetIndent("", "  ")
-	return encoder.Encode(records)
+	return json.NewEncoder(file).Encode(records)
 }
 
+// SaveBatch сохраняет пакет URL и синхронизирует файл.
 func (r *FileRepository) SaveBatch(_ context.Context, urls []URLPair) (map[string]string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -118,6 +117,7 @@ func (r *FileRepository) SaveBatch(_ context.Context, urls []URLPair) (map[strin
 	return result, nil
 }
 
+// Save сохраняет URL и записывает изменения в файл.
 func (r *FileRepository) Save(_ context.Context, id, url, userID string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -138,6 +138,7 @@ func (r *FileRepository) Save(_ context.Context, id, url, userID string) error {
 	return r.save()
 }
 
+// Get возвращает оригинальный URL, флаг удаления и признак наличия записи.
 func (r *FileRepository) Get(_ context.Context, id string) (string, bool, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -148,6 +149,7 @@ func (r *FileRepository) Get(_ context.Context, id string) (string, bool, bool) 
 	return rec.OriginalURL, rec.Deleted, true
 }
 
+// FindByURL ищет короткий идентификатор по оригинальному URL.
 func (r *FileRepository) FindByURL(_ context.Context, url string) (string, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -155,6 +157,7 @@ func (r *FileRepository) FindByURL(_ context.Context, url string) (string, bool)
 	return id, ok
 }
 
+// GetByUserID возвращает все неудалённые URL пользователя.
 func (r *FileRepository) GetByUserID(_ context.Context, userID string) ([]UserURL, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -168,6 +171,7 @@ func (r *FileRepository) GetByUserID(_ context.Context, userID string) ([]UserUR
 	return result, nil
 }
 
+// MarkDeleted помечает URL пользователя как удалённые и сохраняет файл.
 func (r *FileRepository) MarkDeleted(_ context.Context, ids []string, userID string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -187,6 +191,7 @@ func (r *FileRepository) MarkDeleted(_ context.Context, ids []string, userID str
 	return r.save()
 }
 
+// Ping проверяет возможность записи в файл хранилища.
 func (r *FileRepository) Ping(_ context.Context) error {
 	if r.path == "" {
 		return fmt.Errorf("file path not set")

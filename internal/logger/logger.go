@@ -10,7 +10,7 @@ import (
 // Log синглтон логера
 var Log *zap.Logger = zap.NewNop()
 
-// Initialize инициализирует логер с указанным уровнем
+// Initialize инициализирует логер с указанным уровнем.
 func Initialize(level string) error {
 	// преобразуем текстовый уровень логирования в zap.AtomicLevel
 	lvl, err := zap.ParseAtomicLevel(level)
@@ -36,18 +36,20 @@ type responseWriter struct {
 	size       int
 }
 
+// WriteHeader сохраняет код ответа и делегирует запись исходному ResponseWriter.
 func (rw *responseWriter) WriteHeader(code int) {
 	rw.statusCode = code
 	rw.ResponseWriter.WriteHeader(code)
 }
 
+// Write считает размер ответа и делегирует запись исходному ResponseWriter.
 func (rw *responseWriter) Write(b []byte) (int, error) {
 	size, err := rw.ResponseWriter.Write(b)
 	rw.size += size
 	return size, err
 }
 
-// LoggingMiddleware логирует URI, метод, длительность, статус и размер ответа
+// LoggingMiddleware логирует URI, метод, длительность, статус и размер ответа.
 func LoggingMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()

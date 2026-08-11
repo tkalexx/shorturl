@@ -12,8 +12,10 @@ import (
 	"strings"
 )
 
+// CookieName - имя cookie с подписанным идентификатором пользователя.
 const CookieName = "auth"
 
+// Ошибки пакета auth.
 var (
 	ErrNoUserID       = errors.New("user id not found")
 	ErrEmptySecret    = errors.New("auth secret is required")
@@ -133,11 +135,12 @@ func WithUserID(ctx context.Context, userID string) context.Context {
 	return context.WithValue(ctx, userIDKey, userID)
 }
 
-// UserIDFromContext возвращает идентификатор пользователя из контекста
-func UserIDFromContext(ctx context.Context) (string, error) {
-	userID, ok := ctx.Value(userIDKey).(string)
+// UserIDFromContext возвращает идентификатор пользователя из контекста.
+// ok == false, если идентификатор отсутствует или пустой.
+func UserIDFromContext(ctx context.Context) (userID string, ok bool) {
+	userID, ok = ctx.Value(userIDKey).(string)
 	if !ok || userID == "" {
-		return "", ErrNoUserID
+		return "", false
 	}
-	return userID, nil
+	return userID, true
 }
