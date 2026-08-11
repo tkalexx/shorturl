@@ -12,6 +12,7 @@ import (
 	"github.com/tkalexx/shorturl.git"
 	"github.com/tkalexx/shorturl.git/internal/audit"
 	"github.com/tkalexx/shorturl.git/internal/auth"
+	"github.com/tkalexx/shorturl.git/internal/cert"
 	"github.com/tkalexx/shorturl.git/internal/config"
 	"github.com/tkalexx/shorturl.git/internal/db"
 	"github.com/tkalexx/shorturl.git/internal/handler"
@@ -120,9 +121,22 @@ func run(cfg *config.Config) error {
 		zap.String("audit_file", cfg.AuditFile),
 		zap.String("audit_url", cfg.AuditURL),
 		zap.String("pprof_addr", cfg.PprofAddr),
+		zap.Bool("enable_https", cfg.EnableHTTPS),
 	)
 
-	return http.ListenAndServe(cfg.RunAddr, handler.NewRouter(service, authManager, auditor))
+	router := handler.NewRouter(service, authManager, auditor)
+	if cfg.EnableHTTPS {
+		if err := cert.EnsureFiles(cert.CertFile, cert.KeyFile); err != nil {
+			return err
+		}
+		logger.Log.Info("HTTPS enabled",
+			zap.String("cert", cert.CertFile),
+			zap.String("key", cert.KeyFile),
+		)
+		return http.ListenAndServeTLS(cfg.RunAddr, cert.CertFile, cert.KeyFile, router)
+	}
+
+	return http.ListenAndServe(cfg.RunAddr, router)
 }
 
 func runMigrations(db *sql.DB) error {
