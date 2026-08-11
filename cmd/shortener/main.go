@@ -138,9 +138,10 @@ func run(cfg *config.Config) error {
 		zap.String("audit_url", cfg.AuditURL),
 		zap.String("pprof_addr", cfg.PprofAddr),
 		zap.Bool("enable_https", cfg.EnableHTTPS),
+		zap.String("trusted_subnet", cfg.TrustedSubnet),
 	)
 
-	router := handler.NewRouter(service, authManager, auditor)
+	router := handler.NewRouter(service, authManager, auditor, cfg.TrustedSubnet)
 	server := &http.Server{
 		Addr:    cfg.RunAddr,
 		Handler: router,

@@ -28,7 +28,7 @@ func setupTestRouter(service *Service) chi.Router {
 	if err != nil {
 		return nil
 	}
-	return NewRouter(service, authManager, nil)
+	return NewRouter(service, authManager, nil, "")
 }
 
 func withTestUser(req *http.Request, userID string) *http.Request {

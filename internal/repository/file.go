@@ -191,6 +191,20 @@ func (r *FileRepository) MarkDeleted(_ context.Context, ids []string, userID str
 	return r.save()
 }
 
+// Stats возвращает число URL и уникальных пользователей.
+func (r *FileRepository) Stats(_ context.Context) (int, int, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	users := make(map[string]struct{})
+	for _, rec := range r.storage {
+		if rec.UserID != "" {
+			users[rec.UserID] = struct{}{}
+		}
+	}
+	return len(r.storage), len(users), nil
+}
+
 // Ping проверяет возможность записи в файл хранилища.
 func (r *FileRepository) Ping(_ context.Context) error {
 	if r.path == "" {

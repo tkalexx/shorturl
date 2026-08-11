@@ -23,6 +23,7 @@ type Config struct {
 	AuditURL        string // URL удалённого приёмника аудита; пусто - отключён
 	PprofAddr       string // адрес pprof-сервера; пусто - pprof отключён
 	EnableHTTPS     bool   // включать HTTPS (-s / ENABLE_HTTPS)
+	TrustedSubnet   string // CIDR доверенной подсети для /api/internal/stats
 }
 
 // fileConfig описывает JSON-файл конфигурации.
@@ -36,6 +37,7 @@ type fileConfig struct {
 	AuditURL        string `json:"audit_url"`
 	PprofAddr       string `json:"pprof_addr"`
 	EnableHTTPS     *bool  `json:"enable_https"`
+	TrustedSubnet   string `json:"trusted_subnet"`
 }
 
 // NewConfig инициализирует конфигурацию.
@@ -50,6 +52,7 @@ func NewConfig() (*Config, error) {
 		auditURL        string
 		pprofAddr       string
 		enableHTTPS     bool
+		trustedSubnet   string
 		configPath      string
 	)
 
@@ -64,6 +67,7 @@ func NewConfig() (*Config, error) {
 	flag.StringVar(&auditURL, "audit-url", "", "remote audit receiver URL")
 	flag.StringVar(&pprofAddr, "pprof", "", "address for pprof endpoints (empty to disable)")
 	flag.BoolVar(&enableHTTPS, "s", false, "enable HTTPS")
+	flag.StringVar(&trustedSubnet, "t", "", "trusted subnet CIDR for /api/internal/stats")
 	flag.StringVar(&configPath, "c", "", "path to JSON config file")
 	flag.StringVar(&configPath, "config", "", "path to JSON config file")
 	flag.Parse()
@@ -104,6 +108,8 @@ func NewConfig() (*Config, error) {
 			cfg.PprofAddr = pprofAddr
 		case "s":
 			cfg.EnableHTTPS = enableHTTPS
+		case "t":
+			cfg.TrustedSubnet = trustedSubnet
 		}
 	})
 
@@ -150,6 +156,9 @@ func applyFileConfig(cfg *Config, path string) error {
 	if fc.EnableHTTPS != nil {
 		cfg.EnableHTTPS = *fc.EnableHTTPS
 	}
+	if fc.TrustedSubnet != "" {
+		cfg.TrustedSubnet = fc.TrustedSubnet
+	}
 	return nil
 }
 
@@ -184,6 +193,9 @@ func applyEnv(cfg *Config) {
 		} else {
 			cfg.EnableHTTPS = true
 		}
+	}
+	if v := os.Getenv("TRUSTED_SUBNET"); v != "" {
+		cfg.TrustedSubnet = v
 	}
 }
 
