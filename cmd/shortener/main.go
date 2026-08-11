@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"io/fs"
 	"log"
 	"net/http"
@@ -19,13 +20,34 @@ import (
 	"go.uber.org/zap"
 )
 
+var (
+	buildVersion string
+	buildDate    string
+	buildCommit  string
+)
+
 func main() {
+	printBuildInfo()
+
 	// обрабатываем аргументы командной строки
 	cfg := config.NewConfig()
 
 	if err := run(cfg); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func printBuildInfo() {
+	fmt.Printf("Build version: %s\n", valueOrNA(buildVersion))
+	fmt.Printf("Build date: %s\n", valueOrNA(buildDate))
+	fmt.Printf("Build commit: %s\n", valueOrNA(buildCommit))
+}
+
+func valueOrNA(v string) string {
+	if v == "" {
+		return "N/A"
+	}
+	return v
 }
 
 func run(cfg *config.Config) error {
