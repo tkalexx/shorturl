@@ -5,8 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"io/fs"
-	"log"
 	"net/http"
+	"os"
 
 	"github.com/pressly/goose/v3"
 	"github.com/tkalexx/shorturl.git"
@@ -21,9 +21,9 @@ import (
 )
 
 var (
-	buildVersion string
-	buildDate    string
-	buildCommit  string
+	buildVersion = "N/A"
+	buildDate    = "N/A"
+	buildCommit  = "N/A"
 )
 
 func main() {
@@ -33,21 +33,15 @@ func main() {
 	cfg := config.NewConfig()
 
 	if err := run(cfg); err != nil {
-		log.Fatal(err)
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
 	}
 }
 
 func printBuildInfo() {
-	fmt.Printf("Build version: %s\n", valueOrNA(buildVersion))
-	fmt.Printf("Build date: %s\n", valueOrNA(buildDate))
-	fmt.Printf("Build commit: %s\n", valueOrNA(buildCommit))
-}
-
-func valueOrNA(v string) string {
-	if v == "" {
-		return "N/A"
-	}
-	return v
+	fmt.Printf("Build version: %s\n", buildVersion)
+	fmt.Printf("Build date: %s\n", buildDate)
+	fmt.Printf("Build commit: %s\n", buildCommit)
 }
 
 func run(cfg *config.Config) error {
