@@ -118,9 +118,8 @@ func (a *Auditor) Close() {
 	a.wg.Wait()
 
 	a.mu.RLock()
-	observers := append([]Observer(nil), a.observers...)
-	a.mu.RUnlock()
-	for _, o := range observers {
+	defer a.mu.RUnlock()
+	for _, o := range a.observers {
 		if c, ok := o.(io.Closer); ok {
 			if err := c.Close(); err != nil {
 				logger.Log.Error("audit observer close failed", zap.Error(err))

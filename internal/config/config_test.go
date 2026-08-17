@@ -26,6 +26,7 @@ func TestJSONConfigPriority(t *testing.T) {
 
 	resetFlags(t)
 	os.Args = []string{"shortener", "-config", path, "-a", "localhost:1111"}
+	t.Setenv("SERVER_ADDRESS", "localhost:2222")
 	t.Setenv("BASE_URL", "http://from-env")
 	t.Setenv("AUTH_SECRET", "env-auth-secret-16chars")
 
