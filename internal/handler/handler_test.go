@@ -23,10 +23,11 @@ func setupTestService() *Service {
 	return service
 }
 
-func setupTestRouter(service *Service) chi.Router {
+func setupTestRouter(t *testing.T, service *Service) chi.Router {
+	t.Helper()
 	authManager, err := auth.NewManager("test-auth-secret-16chars")
 	if err != nil {
-		panic(err)
+		t.Fatal(err)
 	}
 	return NewRouter(service, authManager, nil)
 }
@@ -364,7 +365,7 @@ func TestShortenJSONResponseFormat(t *testing.T) {
 
 func TestRouter(t *testing.T) {
 	service := setupTestService()
-	r := setupTestRouter(service)
+	r := setupTestRouter(t, service)
 
 	tests := []struct {
 		name        string
@@ -438,7 +439,7 @@ func TestRouter(t *testing.T) {
 
 func TestRouter_GzipCompression(t *testing.T) {
 	service := setupTestService()
-	r := setupTestRouter(service)
+	r := setupTestRouter(t, service)
 
 	t.Run("response compressed for json with accept-encoding", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/shorten", strings.NewReader(`{"url":"https://gzip1.ya.ru"}`))
@@ -539,7 +540,7 @@ func TestRouter_GzipCompression(t *testing.T) {
 
 func TestUserURLs(t *testing.T) {
 	service := setupTestService()
-	r := setupTestRouter(service)
+	r := setupTestRouter(t, service)
 
 	t.Run("no content for new user", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/user/urls", nil)
@@ -607,7 +608,7 @@ func TestUserURLs(t *testing.T) {
 
 func TestDeleteUserURLs(t *testing.T) {
 	service := setupTestService()
-	r := setupTestRouter(service)
+	r := setupTestRouter(t, service)
 
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader("https://delete-me.example.com"))
 	req.Header.Set("Content-Type", "text/plain")

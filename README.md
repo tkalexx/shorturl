@@ -43,6 +43,24 @@ git fetch template && git checkout template/v2 .github
 - **Hexagonal Architecture**
 - **Layered Architecture**
 
+## Сборка с информацией о версии
+
+Переменные `buildVersion`, `buildDate` и `buildCommit` подставляются на этапе компиляции через `-ldflags`. Без флагов в бинарнике остаются значения по умолчанию `N/A`.
+
+```bash
+go build -o shortener \
+  -ldflags "-X 'main.buildVersion=1.0.0' -X 'main.buildDate=$(date -u +%Y-%m-%d)' -X 'main.buildCommit=$(git rev-parse --short HEAD)'" \
+  ./cmd/shortener
+```
+
+При запуске сервис печатает эти значения в начале:
+
+```
+Build version: 1.0.0
+Build date: 2026-08-13
+Build commit: abcdef1
+```
+
 ## Бенчмарки
 
 Запуск бенчмарков ключевых компонентов:

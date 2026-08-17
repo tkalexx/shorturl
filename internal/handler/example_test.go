@@ -21,7 +21,9 @@ func exampleRouter() http.Handler {
 
 	authManager, err := auth.NewManager("example-auth-secret")
 	if err != nil {
-		panic(err)
+		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		})
 	}
 	return handler.NewRouter(service, authManager, nil)
 }
