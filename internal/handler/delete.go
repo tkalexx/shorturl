@@ -25,11 +25,9 @@ func (s *Service) startDeleteWorker() {
 
 // Close останавливает воркер удаления и сбрасывает накопленный батч в хранилище.
 func (s *Service) Close() {
-	select {
-	case <-s.done:
-	default:
+	s.closeOnce.Do(func() {
 		close(s.done)
-	}
+	})
 	s.wg.Wait()
 }
 

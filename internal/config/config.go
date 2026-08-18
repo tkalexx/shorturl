@@ -88,6 +88,8 @@ func NewConfig() (*Config, error) {
 		}
 	}
 
+	applyEnv(cfg)
+
 	flag.Visit(func(f *flag.Flag) {
 		switch f.Name {
 		case "a":
@@ -113,7 +115,6 @@ func NewConfig() (*Config, error) {
 		}
 	})
 
-	applyEnv(cfg)
 	finalize(cfg)
 	return cfg, nil
 }

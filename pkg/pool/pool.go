@@ -14,18 +14,23 @@ type Pool[T Resetter] struct {
 
 // New создаёт пул объектов типа T.
 func New[T Resetter](newFunc func() T) *Pool[T] {
-	return &Pool[T]{
-		pool: sync.Pool{
-			New: func() any {
-				return newFunc()
-			},
-		},
+	p := &Pool[T]{}
+	if newFunc != nil {
+		p.pool.New = func() any {
+			return newFunc()
+		}
 	}
+	return p
 }
 
 // Get возвращает объект из пула.
 func (p *Pool[T]) Get() T {
-	return p.pool.Get().(T)
+	v := p.pool.Get()
+	if v == nil {
+		var zero T
+		return zero
+	}
+	return v.(T)
 }
 
 // Put сбрасывает состояние объекта и помещает его обратно в пул.

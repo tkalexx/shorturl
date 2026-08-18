@@ -34,11 +34,12 @@ var (
 
 // Service реализует бизнес-логику сокращения URL и асинхронного удаления.
 type Service struct {
-	repo     repository.Repository
-	baseURL  string
-	deleteCh chan deleteTask
-	done     chan struct{}
-	wg       sync.WaitGroup
+	repo      repository.Repository
+	baseURL   string
+	deleteCh  chan deleteTask
+	done      chan struct{}
+	closeOnce sync.Once
+	wg        sync.WaitGroup
 }
 
 // NewService создаёт сервис поверх репозитория и запускает воркер удаления.

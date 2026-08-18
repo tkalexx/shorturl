@@ -33,3 +33,12 @@ func TestPoolGetPutResets(t *testing.T) {
 		t.Fatal("expected slice capacity to be preserved")
 	}
 }
+
+func TestPoolNilConstructorReturnsZeroValue(t *testing.T) {
+	p := New[*sample](nil)
+
+	got := p.Get()
+	if got != nil {
+		t.Fatalf("Get() = %v, want nil zero-value", got)
+	}
+}

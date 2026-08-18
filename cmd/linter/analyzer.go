@@ -10,8 +10,8 @@ import (
 	"golang.org/x/tools/go/types/typeutil"
 )
 
-// Analyzer сообщает о вызовах panic, а также log.Fatal*/os.Exit вне main.main.
-var Analyzer = &analysis.Analyzer{
+// analyzer сообщает о вызовах panic, а также log.Fatal*/os.Exit вне main.main.
+var analyzer = &analysis.Analyzer{
 	Name:     "exitcheck",
 	Doc:      "reports panic and log.Fatal/os.Exit calls outside main.main",
 	Requires: []*analysis.Analyzer{inspect.Analyzer},
