@@ -180,7 +180,6 @@ func run(cfg *config.Config) error {
 	}()
 	go func() {
 		if err := mux.Serve(); err != nil {
-			// cmux returns error when listener is closed during shutdown
 			if !errors.Is(err, net.ErrClosed) && !errors.Is(err, cmux.ErrListenerClosed) {
 				serverErr <- fmt.Errorf("cmux: %w", err)
 			}
