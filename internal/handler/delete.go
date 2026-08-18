@@ -19,7 +19,16 @@ type deleteTask struct {
 }
 
 func (s *Service) startDeleteWorker() {
+	s.wg.Add(1)
 	go s.deleteWorker()
+}
+
+// Close останавливает воркер удаления и сбрасывает накопленный батч в хранилище.
+func (s *Service) Close() {
+	s.closeOnce.Do(func() {
+		close(s.done)
+	})
+	s.wg.Wait()
 }
 
 // DeleteUserURLs ставит идентификаторы URL в очередь на асинхронное удаление
@@ -50,6 +59,8 @@ func (s *Service) DeleteUserURLs(userID string, ids []string) {
 }
 
 func (s *Service) deleteWorker() {
+	defer s.wg.Done()
+
 	ticker := time.NewTicker(deleteFlushEvery)
 	defer ticker.Stop()
 
@@ -87,8 +98,18 @@ func (s *Service) deleteWorker() {
 		case <-ticker.C:
 			flush()
 		case <-s.done:
-			flush()
-			return
+			for {
+				select {
+				case task := <-s.deleteCh:
+					batch = append(batch, task)
+					if len(batch) >= deleteBatchSize {
+						flush()
+					}
+				default:
+					flush()
+					return
+				}
+			}
 		}
 	}
 }

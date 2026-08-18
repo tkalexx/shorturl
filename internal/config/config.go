@@ -1,9 +1,12 @@
 package config
 
 import (
+	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/tkalexx/shorturl.git/internal/auth"
@@ -19,56 +22,173 @@ type Config struct {
 	AuditFile       string // путь к файлу аудита; пусто - аудит в файл отключён
 	AuditURL        string // URL удалённого приёмника аудита; пусто - отключён
 	PprofAddr       string // адрес pprof-сервера; пусто - pprof отключён
+	EnableHTTPS     bool   // включать HTTPS (-s / ENABLE_HTTPS)
 }
 
-// NewConfig инициализирует и парсит флаги командной строки
-func NewConfig() *Config {
-	cfg := &Config{}
+// fileConfig описывает JSON-файл конфигурации.
+type fileConfig struct {
+	ServerAddress   string `json:"server_address"`
+	BaseURL         string `json:"base_url"`
+	FileStoragePath string `json:"file_storage_path"`
+	DatabaseDSN     string `json:"database_dsn"`
+	AuthSecret      string `json:"auth_secret"`
+	AuditFile       string `json:"audit_file"`
+	AuditURL        string `json:"audit_url"`
+	PprofAddr       string `json:"pprof_addr"`
+	EnableHTTPS     *bool  `json:"enable_https"`
+}
 
-	// Регистрируем флаги
-	flag.StringVar(&cfg.RunAddr, "a", ":8080", "address and port to run server (e.g., localhost:8888)")
-	flag.StringVar(&cfg.BaseURL, "b", "", "base URL for shortened links (e.g., http://localhost:8000/q)")
-	flag.StringVar(&cfg.FileStoragePath, "file-storage-path", "/tmp/short-url-db.json", "path to file storage for URLs")
-	flag.StringVar(&cfg.DatabaseDSN, "database-dsn", "", "database connection string")
-	flag.StringVar(&cfg.DatabaseDSN, "d", "", "database connection string")
-	flag.StringVar(&cfg.AuthSecret, "auth-secret", "", "secret key for signing auth cookies")
-	flag.StringVar(&cfg.AuditFile, "audit-file", "", "path to audit log file")
-	flag.StringVar(&cfg.AuditURL, "audit-url", "", "remote audit receiver URL")
-	flag.StringVar(&cfg.PprofAddr, "pprof", "localhost:6060", "address for pprof endpoints (empty to disable)")
+// NewConfig инициализирует конфигурацию.
+func NewConfig() (*Config, error) {
+	var (
+		runAddr         string
+		baseURL         string
+		fileStoragePath string
+		databaseDSN     string
+		authSecret      string
+		auditFile       string
+		auditURL        string
+		pprofAddr       string
+		enableHTTPS     bool
+		configPath      string
+	)
+
+	flag.StringVar(&runAddr, "a", "", "address and port to run server (e.g., localhost:8888)")
+	flag.StringVar(&baseURL, "b", "", "base URL for shortened links (e.g., http://localhost:8000/q)")
+	flag.StringVar(&fileStoragePath, "f", "", "path to file storage for URLs")
+	flag.StringVar(&fileStoragePath, "file-storage-path", "", "path to file storage for URLs")
+	flag.StringVar(&databaseDSN, "d", "", "database connection string")
+	flag.StringVar(&databaseDSN, "database-dsn", "", "database connection string")
+	flag.StringVar(&authSecret, "auth-secret", "", "secret key for signing auth cookies")
+	flag.StringVar(&auditFile, "audit-file", "", "path to audit log file")
+	flag.StringVar(&auditURL, "audit-url", "", "remote audit receiver URL")
+	flag.StringVar(&pprofAddr, "pprof", "", "address for pprof endpoints (empty to disable)")
+	flag.BoolVar(&enableHTTPS, "s", false, "enable HTTPS")
+	flag.StringVar(&configPath, "c", "", "path to JSON config file")
+	flag.StringVar(&configPath, "config", "", "path to JSON config file")
 	flag.Parse()
 
-	if envAddr := os.Getenv("SERVER_ADDRESS"); envAddr != "" {
-		cfg.RunAddr = envAddr
+	if configPath == "" {
+		configPath = os.Getenv("CONFIG")
 	}
 
-	if envBaseURL := os.Getenv("BASE_URL"); envBaseURL != "" {
-		cfg.BaseURL = envBaseURL
+	cfg := &Config{
+		RunAddr:         ":8080",
+		FileStoragePath: "/tmp/short-url-db.json",
+		PprofAddr:       "localhost:6060",
 	}
 
-	if envFilePath := os.Getenv("FILE_STORAGE_PATH"); envFilePath != "" {
-		cfg.FileStoragePath = envFilePath
+	if configPath != "" {
+		if err := applyFileConfig(cfg, configPath); err != nil {
+			return nil, err
+		}
 	}
 
-	if envDSN := os.Getenv("DATABASE_DSN"); envDSN != "" {
-		cfg.DatabaseDSN = envDSN
+	applyEnv(cfg)
+
+	flag.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "a":
+			cfg.RunAddr = runAddr
+		case "b":
+			cfg.BaseURL = baseURL
+		case "f", "file-storage-path":
+			cfg.FileStoragePath = fileStoragePath
+		case "d", "database-dsn":
+			cfg.DatabaseDSN = databaseDSN
+		case "auth-secret":
+			cfg.AuthSecret = authSecret
+		case "audit-file":
+			cfg.AuditFile = auditFile
+		case "audit-url":
+			cfg.AuditURL = auditURL
+		case "pprof":
+			cfg.PprofAddr = pprofAddr
+		case "s":
+			cfg.EnableHTTPS = enableHTTPS
+		}
+	})
+
+	finalize(cfg)
+	return cfg, nil
+}
+
+func applyFileConfig(cfg *Config, path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read config file: %w", err)
 	}
 
-	if envSecret := os.Getenv("AUTH_SECRET"); envSecret != "" {
-		cfg.AuthSecret = envSecret
+	var fc fileConfig
+	if err := json.Unmarshal(data, &fc); err != nil {
+		return fmt.Errorf("parse config file: %w", err)
 	}
 
-	if envAuditFile := os.Getenv("AUDIT_FILE"); envAuditFile != "" {
-		cfg.AuditFile = envAuditFile
+	if fc.ServerAddress != "" {
+		cfg.RunAddr = fc.ServerAddress
 	}
-
-	if envAuditURL := os.Getenv("AUDIT_URL"); envAuditURL != "" {
-		cfg.AuditURL = envAuditURL
+	if fc.BaseURL != "" {
+		cfg.BaseURL = fc.BaseURL
 	}
-
-	if envPprof := os.Getenv("PPROF_ADDR"); envPprof != "" {
-		cfg.PprofAddr = envPprof
+	if fc.FileStoragePath != "" {
+		cfg.FileStoragePath = fc.FileStoragePath
 	}
+	if fc.DatabaseDSN != "" {
+		cfg.DatabaseDSN = fc.DatabaseDSN
+	}
+	if fc.AuthSecret != "" {
+		cfg.AuthSecret = fc.AuthSecret
+	}
+	if fc.AuditFile != "" {
+		cfg.AuditFile = fc.AuditFile
+	}
+	if fc.AuditURL != "" {
+		cfg.AuditURL = fc.AuditURL
+	}
+	if fc.PprofAddr != "" {
+		cfg.PprofAddr = fc.PprofAddr
+	}
+	if fc.EnableHTTPS != nil {
+		cfg.EnableHTTPS = *fc.EnableHTTPS
+	}
+	return nil
+}
 
+func applyEnv(cfg *Config) {
+	if v := os.Getenv("SERVER_ADDRESS"); v != "" {
+		cfg.RunAddr = v
+	}
+	if v := os.Getenv("BASE_URL"); v != "" {
+		cfg.BaseURL = v
+	}
+	if v := os.Getenv("FILE_STORAGE_PATH"); v != "" {
+		cfg.FileStoragePath = v
+	}
+	if v := os.Getenv("DATABASE_DSN"); v != "" {
+		cfg.DatabaseDSN = v
+	}
+	if v := os.Getenv("AUTH_SECRET"); v != "" {
+		cfg.AuthSecret = v
+	}
+	if v := os.Getenv("AUDIT_FILE"); v != "" {
+		cfg.AuditFile = v
+	}
+	if v := os.Getenv("AUDIT_URL"); v != "" {
+		cfg.AuditURL = v
+	}
+	if v := os.Getenv("PPROF_ADDR"); v != "" {
+		cfg.PprofAddr = v
+	}
+	if v := os.Getenv("ENABLE_HTTPS"); v != "" {
+		if b, err := strconv.ParseBool(v); err == nil {
+			cfg.EnableHTTPS = b
+		} else {
+			cfg.EnableHTTPS = true
+		}
+	}
+}
+
+func finalize(cfg *Config) {
 	if cfg.FileStoragePath == "" {
 		cfg.FileStoragePath = "/tmp/short-url-db.json"
 	}
@@ -78,12 +198,14 @@ func NewConfig() *Config {
 		if strings.HasPrefix(addr, ":") {
 			addr = "localhost" + addr
 		}
-		cfg.BaseURL = "http://" + addr
+		scheme := "http"
+		if cfg.EnableHTTPS {
+			scheme = "https"
+		}
+		cfg.BaseURL = scheme + "://" + addr
 	}
 
 	cfg.BaseURL = strings.TrimSuffix(cfg.BaseURL, "/")
-
-	return cfg
 }
 
 // Validate проверяет обязательные настройки сервиса.

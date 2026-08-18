@@ -12,6 +12,7 @@ import (
 	"net/http/pprof"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -33,10 +34,12 @@ var (
 
 // Service реализует бизнес-логику сокращения URL и асинхронного удаления.
 type Service struct {
-	repo     repository.Repository
-	baseURL  string
-	deleteCh chan deleteTask
-	done     chan struct{}
+	repo      repository.Repository
+	baseURL   string
+	deleteCh  chan deleteTask
+	done      chan struct{}
+	closeOnce sync.Once
+	wg        sync.WaitGroup
 }
 
 // NewService создаёт сервис поверх репозитория и запускает воркер удаления.
