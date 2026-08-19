@@ -175,6 +175,21 @@ func (s *Service) Get(ctx context.Context, id string) (string, error) {
 	return url, nil
 }
 
+// StatsResponse — ответ GET /api/internal/stats.
+type StatsResponse struct {
+	URLs  int `json:"urls"`
+	Users int `json:"users"`
+}
+
+// Stats возвращает количество URL и пользователей в сервисе.
+func (s *Service) Stats(ctx context.Context) (StatsResponse, error) {
+	urls, users, err := s.repo.Stats(ctx)
+	if err != nil {
+		return StatsResponse{}, err
+	}
+	return StatsResponse{URLs: urls, Users: users}, nil
+}
+
 // GetUserURLs возвращает все неудалённые URL, сокращённые пользователем.
 func (s *Service) GetUserURLs(ctx context.Context, userID string) ([]UserURLResponse, error) {
 	urls, err := s.repo.GetByUserID(ctx, userID)
@@ -236,6 +251,20 @@ func (h *Handler) ping(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusOK)
+}
+
+// stats handler для GET /api/internal/stats
+func (h *Handler) stats(w http.ResponseWriter, r *http.Request) {
+	stats, err := h.service.Stats(r.Context())
+	if err != nil {
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(stats); err != nil {
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+	}
 }
 
 // shortener возвращает сокращённый URL
@@ -402,7 +431,7 @@ func mapError(w http.ResponseWriter, err error) {
 
 // NewRouter собирает chi-роутер со всеми эндпоинтами сервиса,
 // middleware логирования, gzip и аутентификации.
-func NewRouter(service *Service, authManager *auth.Manager, auditor *audit.Auditor) chi.Router {
+func NewRouter(service *Service, authManager *auth.Manager, auditor *audit.Auditor, trustedSubnet string) chi.Router {
 	r := chi.NewRouter()
 	r.Use(logger.LoggingMiddleware)
 	r.Use(gzip.Middleware)
@@ -410,6 +439,7 @@ func NewRouter(service *Service, authManager *auth.Manager, auditor *audit.Audit
 	h := NewHandler(service, auditor)
 
 	r.Get("/ping", h.ping)
+	r.With(trustedSubnetMiddleware(trustedSubnet)).Get("/api/internal/stats", h.stats)
 
 	r.Group(func(r chi.Router) {
 		r.Use(authManager.Middleware)

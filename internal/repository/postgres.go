@@ -161,6 +161,22 @@ func (r *PostgresRepository) MarkDeleted(ctx context.Context, ids []string, user
 	return err
 }
 
+// Stats возвращает число URL и уникальных пользователей.
+func (r *PostgresRepository) Stats(ctx context.Context) (int, int, error) {
+	var urls int
+	var users int
+	err := r.db.QueryRowContext(ctx, `
+		SELECT
+			COUNT(*) AS urls_count,
+			COUNT(DISTINCT NULLIF(user_id, '')) AS users_count
+		FROM urls
+	`).Scan(&urls, &users)
+	if err != nil {
+		return 0, 0, err
+	}
+	return urls, users, nil
+}
+
 // Ping проверяет соединение с PostgreSQL.
 func (r *PostgresRepository) Ping(ctx context.Context) error {
 	return r.db.PingContext(ctx)

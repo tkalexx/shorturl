@@ -25,7 +25,7 @@ func exampleRouter() http.Handler {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		})
 	}
-	return handler.NewRouter(service, authManager, nil)
+	return handler.NewRouter(service, authManager, nil, "")
 }
 
 // Example_shortenPlain демонстрирует POST / — сокращение URL в text/plain.

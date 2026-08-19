@@ -29,7 +29,7 @@ func setupTestRouter(t *testing.T, service *Service) chi.Router {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return NewRouter(service, authManager, nil)
+	return NewRouter(service, authManager, nil, "")
 }
 
 func withTestUser(req *http.Request, userID string) *http.Request {

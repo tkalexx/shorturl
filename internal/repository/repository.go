@@ -29,5 +29,6 @@ type Repository interface {
 	FindByURL(ctx context.Context, url string) (id string, found bool)
 	GetByUserID(ctx context.Context, userID string) ([]UserURL, error)
 	MarkDeleted(ctx context.Context, ids []string, userID string) error
+	Stats(ctx context.Context) (urls int, users int, err error)
 	Ping(ctx context.Context) error
 }

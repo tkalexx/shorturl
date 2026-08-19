@@ -15,9 +15,13 @@ import (
 // CookieName - имя cookie с подписанным идентификатором пользователя.
 const CookieName = "auth"
 
+// AuthorizationMetadata — ключ metadata/header с токеном аутентификации для gRPC.
+const AuthorizationMetadata = "authorization"
+
 // Ошибки пакета auth.
 var (
 	ErrNoUserID       = errors.New("user id not found")
+	ErrUnauthorized   = errors.New("unauthorized")
 	ErrEmptySecret    = errors.New("auth secret is required")
 	ErrSecretTooShort = errors.New("auth secret must be at least 16 characters")
 )
@@ -78,12 +82,51 @@ func generateUserID() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-func (m *Manager) setCookie(w http.ResponseWriter, userID string) {
-	http.SetCookie(w, &http.Cookie{
-		Name:  CookieName,
-		Value: m.sign(userID),
-		Path:  "/",
-	})
+// IssueToken возвращает подписанный токен вида "<userID>|<hex>" для cookie/metadata.
+func (m *Manager) IssueToken(userID string) string {
+	return m.sign(userID)
+}
+
+// UserIDFromToken проверяет токен и возвращает userID без создания нового пользователя.
+func (m *Manager) UserIDFromToken(token string) (string, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return "", ErrNoUserID
+	}
+	parts := strings.SplitN(token, "|", 2)
+	if parts[0] == "" {
+		return "", ErrUnauthorized
+	}
+	return m.verify(token)
+}
+
+// Authenticate разбирает токен из cookie или gRPC metadata.
+// Пустой/невалидный токен → новый пользователь (tokenChanged=true).
+// Токен с пустым userID → ErrUnauthorized.
+func (m *Manager) Authenticate(token string) (userID, issuedToken string, tokenChanged bool, err error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		userID, err = generateUserID()
+		if err != nil {
+			return "", "", false, err
+		}
+		return userID, m.sign(userID), true, nil
+	}
+
+	parts := strings.SplitN(token, "|", 2)
+	if parts[0] == "" {
+		return "", "", false, ErrUnauthorized
+	}
+
+	id, verifyErr := m.verify(token)
+	if verifyErr != nil {
+		userID, err = generateUserID()
+		if err != nil {
+			return "", "", false, err
+		}
+		return userID, m.sign(userID), true, nil
+	}
+	return id, token, false, nil
 }
 
 // Middleware выдает, проверяет Cookie и кладет userID в контекст
@@ -91,38 +134,30 @@ func (m *Manager) setCookie(w http.ResponseWriter, userID string) {
 // Cookie есть, но без ID пользователя - отдаем 401 ошибку
 func (m *Manager) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		userID := ""
-
-		cookie, err := r.Cookie(CookieName)
-		switch {
-		case err == nil:
+		token := ""
+		if cookie, err := r.Cookie(CookieName); err == nil {
 			if cookie.Value == "" {
 				http.Error(w, "Unauthorized", http.StatusUnauthorized)
 				return
 			}
-			parts := strings.SplitN(cookie.Value, "|", 2)
-			if parts[0] == "" {
+			token = cookie.Value
+		}
+
+		userID, issuedToken, tokenChanged, err := m.Authenticate(token)
+		if err != nil {
+			if errors.Is(err, ErrUnauthorized) {
 				http.Error(w, "Unauthorized", http.StatusUnauthorized)
 				return
 			}
-			id, verifyErr := m.verify(cookie.Value)
-			if verifyErr != nil {
-				userID, err = generateUserID()
-				if err != nil {
-					http.Error(w, "Internal error", http.StatusInternalServerError)
-					return
-				}
-				m.setCookie(w, userID)
-			} else {
-				userID = id
-			}
-		default:
-			userID, err = generateUserID()
-			if err != nil {
-				http.Error(w, "Internal error", http.StatusInternalServerError)
-				return
-			}
-			m.setCookie(w, userID)
+			http.Error(w, "Internal error", http.StatusInternalServerError)
+			return
+		}
+		if tokenChanged {
+			http.SetCookie(w, &http.Cookie{
+				Name:  CookieName,
+				Value: issuedToken,
+				Path:  "/",
+			})
 		}
 
 		ctx := context.WithValue(r.Context(), userIDKey, userID)

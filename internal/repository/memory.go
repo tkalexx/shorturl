@@ -107,3 +107,17 @@ func (m *InMemory) MarkDeleted(_ context.Context, ids []string, userID string) e
 	}
 	return nil
 }
+
+// Stats возвращает число URL и уникальных пользователей.
+func (m *InMemory) Stats(_ context.Context) (int, int, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	users := make(map[string]struct{})
+	for _, rec := range m.urls {
+		if rec.UserID != "" {
+			users[rec.UserID] = struct{}{}
+		}
+	}
+	return len(m.urls), len(users), nil
+}
