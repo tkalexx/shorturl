@@ -164,14 +164,14 @@ func (r *PostgresRepository) MarkDeleted(ctx context.Context, ids []string, user
 // Stats возвращает число URL и уникальных пользователей.
 func (r *PostgresRepository) Stats(ctx context.Context) (int, int, error) {
 	var urls int
-	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM urls`).Scan(&urls); err != nil {
-		return 0, 0, err
-	}
-
 	var users int
-	if err := r.db.QueryRowContext(ctx, `
-		SELECT COUNT(DISTINCT user_id) FROM urls WHERE user_id IS NOT NULL AND user_id <> ''
-	`).Scan(&users); err != nil {
+	err := r.db.QueryRowContext(ctx, `
+		SELECT
+			COUNT(*) AS urls_count,
+			COUNT(DISTINCT NULLIF(user_id, '')) AS users_count
+		FROM urls
+	`).Scan(&urls, &users)
+	if err != nil {
 		return 0, 0, err
 	}
 	return urls, users, nil

@@ -50,7 +50,7 @@ func (s *Server) ShortenURL(ctx context.Context, req *pb.URLShortenRequest) (*pb
 		st := status.New(codes.AlreadyExists, "URL already exists")
 		st, detailErr := st.WithDetails(resp)
 		if detailErr != nil {
-			return resp, status.Error(codes.AlreadyExists, shortURL)
+			return nil, status.Error(codes.AlreadyExists, shortURL)
 		}
 		return nil, st.Err()
 	}
